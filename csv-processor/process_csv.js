@@ -105,6 +105,9 @@ async function processVisiCSV(inputPath, outputPath) {
         
         // Parsear CSV
         const visiProducts = parseCSV(csvContent, ';');
+        // TESTE: Limitar a 100 produtos para debug
+const testProducts = visiProducts.slice(0, 100);
+console.log(`🧪 MODO TESTE: Processando apenas ${testProducts.length} produtos de ${visiProducts.length} total`);
         console.log(`📊 ${visiProducts.length} produtos encontrados no CSV`);
         
         // Transformar produtos
