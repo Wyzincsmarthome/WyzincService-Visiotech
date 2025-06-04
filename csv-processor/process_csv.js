@@ -42,9 +42,9 @@ function generateShopifyCSV(products) {
         'Included / International', 'Price / International', 'Compare At Price / International',
         'Status'
     ];
-    
+
     let csv = headers.join(',') + '\n';
-    
+
     products.forEach(product => {
         const row = headers.map(header => {
             const value = product[header] || '';
@@ -56,115 +56,65 @@ function generateShopifyCSV(products) {
         });
         csv += row.join(',') + '\n';
     });
-    
-    return csv;
-}
 
-// Função para processar imagens extras como produtos separados
-function processExtraImages(shopifyProduct, extraImages) {
-    const extraImageProducts = [];
-    
-    extraImages.forEach((imageUrl, index) => {
-        if (index === 0) return; // Primeira imagem já está no produto principal
-        
-        const imageProduct = { ...shopifyProduct };
-        imageProduct['Handle'] = shopifyProduct['Handle']; // Mesmo handle
-        imageProduct['Title'] = ''; // Título vazio para imagens extras
-        imageProduct['Body (HTML)'] = '';
-        imageProduct['Vendor'] = '';
-        imageProduct['Type'] = '';
-        imageProduct['Tags'] = '';
-        imageProduct['Variant SKU'] = '';
-        imageProduct['Variant Price'] = '';
-        imageProduct['Variant Inventory Qty'] = '';
-        imageProduct['Image Src'] = imageUrl;
-        imageProduct['Image Position'] = (index + 1).toString();
-        imageProduct['Image Alt Text'] = shopifyProduct['Title'];
-        
-        // Limpar outros campos para imagens extras
-        Object.keys(imageProduct).forEach(key => {
-            if (key.startsWith('Variant') && key !== 'Variant Image') {
-                imageProduct[key] = '';
-            }
-        });
-        
-        extraImageProducts.push(imageProduct);
-    });
-    
-    return extraImageProducts;
+    return csv;
 }
 
 // Função principal
 async function processVisiCSV(inputPath, outputPath) {
     try {
         console.log('🚀 Iniciando processamento CSV Visiotech...');
-        
+
         // Ler ficheiro CSV
         const csvContent = fs.readFileSync(inputPath, 'utf-8');
         console.log('📁 Ficheiro CSV carregado');
-        
+
         // Parsear CSV
         const visiProducts = parseCSV(csvContent, ';');
-        // TESTE: Limitar a 100 produtos para debug
-const testProducts = visiProducts; // Processar todos os produtos
-console.log(`🚀 MODO PRODUÇÃO: Processando ${testProducts.length} produtos total`);
         console.log(`📊 ${visiProducts.length} produtos encontrados no CSV`);
-        
+
         // Transformar produtos
         const shopifyProducts = [];
         let processedCount = 0;
         let skippedCount = 0;
-        
-        testProducts.forEach((visiProduct, index) => {
+
+        // CORREÇÃO: Usar for loop simples em vez de forEach para melhor controlo de erros
+        for (let index = 0; index < visiProducts.length; index++) {
+            const visiProduct = visiProducts[index];
+            
             try {
                 const transformed = transformProduct(visiProduct);
-                
                 if (transformed) {
                     shopifyProducts.push(transformed);
-                    
-                    // Processar imagens extras de forma segura
-                    try {
-                        const extraImagesField = visiProduct.extra_images_paths || '';
-                        if (extraImagesField && extraImagesField.trim() !== '') {
-                            // Usar a função do transformer que já está corrigida
-                            const extraImages = require('./csv_transformer').processExtraImages ? 
-                                require('./csv_transformer').processExtraImages(extraImagesField) : [];
-                            
-                            if (extraImages.length > 1) {
-                                const extraImageProducts = processExtraImages(transformed, extraImages);
-                                shopifyProducts.push(...extraImageProducts);
-                            }
-                        }
-                    } catch (imageError) {
-                        console.log(`⚠️ Erro nas imagens do produto ${index + 1}: ${imageError.message}`);
-                        // Continuar sem as imagens extras
-                    }
-                    
                     processedCount++;
-                    console.log(`✅ Produto ${index + 1}: ${visiProduct.name} (${visiProduct.brand}) → Processado`);
+                    
+                    // Log a cada 100 produtos para não sobrecarregar
+                    if (processedCount % 100 === 0) {
+                        console.log(`✅ Processados ${processedCount} produtos...`);
+                    }
                 } else {
                     skippedCount++;
-                    console.log(`⏭️ Produto ${index + 1}: ${visiProduct.name} (${visiProduct.brand}) → Marca não aprovada`);
                 }
             } catch (productError) {
                 skippedCount++;
                 console.log(`❌ Erro no produto ${index + 1}: ${productError.message}`);
             }
-        });
-        
+        }
+
         // Gerar CSV Shopify
+        console.log('📝 Gerando CSV Shopify...');
         const shopifyCSV = generateShopifyCSV(shopifyProducts);
-        
+
         // Guardar ficheiro
         fs.writeFileSync(outputPath, shopifyCSV, 'utf-8');
-        
+
         console.log('\n🎉 Processamento concluído!');
         console.log(`📊 Estatísticas:`);
-        console.log(`   • Produtos processados: ${processedCount}`);
-        console.log(`   • Produtos ignorados: ${skippedCount}`);
-        console.log(`   • Total linhas Shopify: ${shopifyProducts.length}`);
+        console.log(`  • Produtos processados: ${processedCount}`);
+        console.log(`  • Produtos ignorados: ${skippedCount}`);
+        console.log(`  • Total linhas Shopify: ${shopifyProducts.length}`);
         console.log(`📁 Ficheiro gerado: ${outputPath}`);
-        
+
         // Relatório de marcas processadas
         const brandCounts = {};
         shopifyProducts.forEach(product => {
@@ -172,21 +122,22 @@ console.log(`🚀 MODO PRODUÇÃO: Processando ${testProducts.length} produtos t
                 brandCounts[product.Vendor] = (brandCounts[product.Vendor] || 0) + 1;
             }
         });
-        
+
         console.log('\n🏷️ Marcas processadas:');
         Object.entries(brandCounts).forEach(([brand, count]) => {
             console.log(`   • ${brand}: ${count} produtos`);
         });
-        
+
         return {
             processed: processedCount,
             skipped: skippedCount,
             total: shopifyProducts.length,
             brands: brandCounts
         };
-        
+
     } catch (error) {
         console.error('🚨 Erro no processamento:', error.message);
+        console.error('Stack trace:', error.stack);
         throw error;
     }
 }
@@ -195,7 +146,7 @@ console.log(`🚀 MODO PRODUÇÃO: Processando ${testProducts.length} produtos t
 if (require.main === module) {
     const inputFile = process.argv[2] || 'input/visiotech_connect.csv';
     const outputFile = process.argv[3] || 'output/shopify_products.csv';
-    
+
     processVisiCSV(inputFile, outputFile)
         .then(result => {
             console.log('\n✅ Processamento concluído com sucesso!');
