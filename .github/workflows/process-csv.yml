@@ -69,8 +69,21 @@ jobs:
         
         echo "📄 Processando ficheiro: $CSV_FILE"
         
+        # Definir nome do ficheiro de saída
+        OUTPUT_FILE="csv-output/shopify_products_$(date +%Y%m%d_%H%M%S).csv"
+        echo "📁 Ficheiro de saída: $OUTPUT_FILE"
+        
         # Executar processamento
-        node csv-processor/process_csv.js "$CSV_FILE" "csv-output/shopify_products_$(date +%Y%m%d_%H%M%S).csv" 2>&1 | tee logs/processing_$(date +%Y%m%d_%H%M%S).log
+        node csv-processor/process_csv.js "$CSV_FILE" "$OUTPUT_FILE" 2>&1 | tee logs/processing_$(date +%Y%m%d_%H%M%S).log
+        
+        # Verificar se ficheiro foi criado
+        if [ -f "$OUTPUT_FILE" ]; then
+          echo "✅ Ficheiro CSV Shopify criado com sucesso: $OUTPUT_FILE"
+          echo "📊 Linhas no ficheiro: $(wc -l < "$OUTPUT_FILE")"
+        else
+          echo "❌ Erro: Ficheiro CSV Shopify não foi criado"
+          exit 1
+        fi
         
     - name: Configurar variáveis de ambiente para Shopify
       env:
@@ -89,15 +102,22 @@ jobs:
         echo "🚀 Iniciando upload para Shopify..."
         echo "⏰ Timestamp: $(date)"
         
+        # Debug: Listar ficheiros gerados
+        echo "📁 Ficheiros em csv-output/:"
+        ls -la csv-output/ || echo "Pasta csv-output não existe"
+        
         # Encontrar ficheiro CSV gerado mais recente
-        SHOPIFY_CSV=$(ls -t csv-output/shopify_products_*.csv 2>/dev/null | head -n1)
+        SHOPIFY_CSV=$(find csv-output -name "shopify_products_*.csv" -type f 2>/dev/null | sort | tail -n1)
         
         if [ -z "$SHOPIFY_CSV" ]; then
           echo "❌ Nenhum ficheiro CSV Shopify encontrado"
+          echo "🔍 Tentando encontrar qualquer CSV em csv-output/:"
+          find csv-output -name "*.csv" -type f 2>/dev/null || echo "Nenhum CSV encontrado"
           exit 1
         fi
         
         echo "📄 Fazendo upload: $SHOPIFY_CSV"
+        echo "📊 Tamanho do ficheiro: $(wc -l < "$SHOPIFY_CSV") linhas"
         
         # Executar upload
         node csv-processor/upload_to_shopify.js "$SHOPIFY_CSV" 2>&1 | tee logs/upload_$(date +%Y%m%d_%H%M%S).log
