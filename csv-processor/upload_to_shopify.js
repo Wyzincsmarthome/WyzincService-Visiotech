@@ -12,12 +12,12 @@ function createShopifyClient() {
     
     return createAdminRestApiClient({
         storeDomain: storeDomain,
-        apiVersion: '2024-07', // CORREÇÃO: Versão API atualizada
+        apiVersion: '2024-07',
         accessToken: process.env.SHOPIFY_ACCESS_TOKEN,
     });
 }
 
-// Função CORRIGIDA para ler CSV Shopify (sem limites)
+// Função ULTRA-SIMPLIFICADA para ler CSV Shopify
 function parseShopifyCSV(csvContent) {
     try {
         const lines = csvContent.split('\n').filter(line => line.trim());
@@ -28,27 +28,27 @@ function parseShopifyCSV(csvContent) {
         
         console.log(`📄 ${lines.length} linhas encontradas no CSV`);
         
-        // Parsing CSV mais robusto para lidar com vírgulas dentro de campos
-        const headers = parseCSVLine(lines[0]);
+        // Split simples por vírgula (assumindo CSV bem formatado)
+        const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
         const products = [];
         
         console.log('📋 Headers encontrados:', headers.slice(0, 5).join(', ') + '...');
         
-        // CORREÇÃO: Processar TODAS as linhas (sem limite)
+        // Processar TODAS as linhas
         for (let i = 1; i < lines.length; i++) {
             try {
-                const values = parseCSVLine(lines[i]);
+                const values = lines[i].split(',').map(v => v.trim().replace(/"/g, ''));
                 const product = {};
                 
                 headers.forEach((header, index) => {
-                    product[header] = values[index] ? values[index].trim() : '';
+                    product[header] = values[index] || '';
                 });
                 
                 // Apenas processar linhas com Handle e Title
                 if (product.Handle && product.Title) {
                     products.push(product);
                     
-                    // Log a cada 100 produtos para não sobrecarregar
+                    // Log a cada 100 produtos
                     if (products.length % 100 === 0) {
                         console.log(`📦 Produtos válidos encontrados: ${products.length}`);
                     }
@@ -65,39 +65,6 @@ function parseShopifyCSV(csvContent) {
         console.error('🚨 Erro ao parsear CSV:', error.message);
         return [];
     }
-}
-
-// Função para parsear linha CSV (lida com vírgulas dentro de campos)
-function parseCSVLine(line) {
-    const result = [];
-    let current = '';
-    let inQuotes = false;
-    
-    for (let i = 0; i < line.length; i++) {
-        const char = line[i];
-        
-        if (char === '"') {
-            if (inQuotes && line[i + 1] === '"') {
-                // Aspas duplas escapadas
-                current += '"';
-                i++; // Skip próximo caractere
-            } else {
-                // Toggle estado das aspas
-                inQuotes = !inQuotes;
-            }
-        } else if (char === ',' && !inQuotes) {
-            // Vírgula fora de aspas = separador
-            result.push(current);
-            current = '';
-        } else {
-            current += char;
-        }
-    }
-    
-    // Adicionar último campo
-    result.push(current);
-    
-    return result;
 }
 
 // Função para converter produto
@@ -118,56 +85,7 @@ function convertToShopifyProduct(csvProduct) {
     };
 }
 
-// Função CORRIGIDA para verificar se produto já existe
-async function checkProductExists(client, sku) {
-    try {
-        if (!sku) return null;
-        
-        // CORREÇÃO: Usar query parameters em vez de body para GET request
-        const response = await client.get('/products', {
-            searchParams: {
-                fields: 'id,title,variants',
-                limit: '250'
-            }
-        });
-        
-        if (response.data && response.data.products) {
-            for (const product of response.data.products) {
-                if (product.variants) {
-                    for (const variant of product.variants) {
-                        if (variant.sku === sku) {
-                            return product;
-                        }
-                    }
-                }
-            }
-        }
-        
-        return null;
-    } catch (error) {
-        console.log(`⚠️ Erro ao verificar produto existente: ${error.message}`);
-        return null;
-    }
-}
-
-// Função SIMPLIFICADA - criar produtos sem verificação de duplicados
-async function createProductOnly(client, productData) {
-    try {
-        const response = await client.post('/products', {
-            data: { product: productData }
-        });
-        
-        if (response.data && response.data.product) {
-            return response.data.product;
-        } else {
-            throw new Error('Resposta inválida da API');
-        }
-    } catch (error) {
-        throw error;
-    }
-}
-
-// Função principal CORRIGIDA e SIMPLIFICADA
+// Função principal ULTRA-SIMPLIFICADA
 async function uploadToShopify(csvFilePath) {
     try {
         console.log('🚀 Iniciando upload para Shopify...');
@@ -195,8 +113,9 @@ async function uploadToShopify(csvFilePath) {
         
         let createdCount = 0;
         let errorCount = 0;
+        let skippedCount = 0;
         
-        // SIMPLIFICAÇÃO: Apenas criar produtos (sem verificação de duplicados)
+        // Processar TODOS os produtos (sem verificação de duplicados)
         for (let i = 0; i < csvProducts.length; i++) {
             const csvProduct = csvProducts[i];
             
@@ -207,36 +126,42 @@ async function uploadToShopify(csvFilePath) {
                 
                 const productData = convertToShopifyProduct(csvProduct);
                 
-                // Criar produto diretamente
-                const createdProduct = await createProductOnly(client, productData);
+                // Criar produto diretamente (sem verificação)
+                const response = await client.post('/products', {
+                    data: { product: productData }
+                });
                 
-                if (createdProduct) {
+                if (response.data && response.data.product) {
                     createdCount++;
                     if ((i + 1) % 10 === 0) {
-                        console.log(`✅ Produto criado: ${csvProduct.Title} (ID: ${createdProduct.id})`);
+                        console.log(`✅ Produto criado: ${csvProduct.Title} (ID: ${response.data.product.id})`);
                     }
+                } else {
+                    throw new Error('Resposta inválida da API');
                 }
                 
-                // Delay para evitar rate limiting (Shopify permite 2 requests/segundo)
+                // Delay para evitar rate limiting
                 await new Promise(resolve => setTimeout(resolve, 500));
                 
                 // Log de progresso a cada 50 produtos
                 if ((i + 1) % 50 === 0) {
                     console.log(`📊 Progresso: ${i + 1}/${csvProducts.length} (${Math.round((i + 1) / csvProducts.length * 100)}%)`);
-                    console.log(`   • Criados: ${createdCount} | Erros: ${errorCount}`);
+                    console.log(`   • Criados: ${createdCount} | Erros: ${errorCount} | Ignorados: ${skippedCount}`);
                 }
                 
             } catch (error) {
-                errorCount++;
                 if (error.message.includes('rate limit') || error.message.includes('429')) {
                     console.log(`⏸️ Rate limit atingido, aguardando 10 segundos...`);
                     await new Promise(resolve => setTimeout(resolve, 10000));
                     i--; // Retry este produto
-                } else if (error.message.includes('already exists') || error.message.includes('duplicate')) {
-                    console.log(`⚠️ Produto já existe: ${csvProduct.Title}`);
-                    // Não contar como erro se produto já existe
-                    errorCount--;
+                } else if (error.message.includes('already exists') || 
+                          error.message.includes('duplicate') ||
+                          error.message.includes('taken') ||
+                          error.message.includes('must be unique')) {
+                    skippedCount++;
+                    console.log(`⚠️ Produto já existe (ignorado): ${csvProduct.Title}`);
                 } else {
+                    errorCount++;
                     console.error(`❌ Erro no produto ${csvProduct.Title}: ${error.message}`);
                 }
             }
@@ -245,11 +170,13 @@ async function uploadToShopify(csvFilePath) {
         console.log('\n🎉 Upload concluído!');
         console.log(`📊 Estatísticas finais:`);
         console.log(`  • Produtos criados: ${createdCount}`);
+        console.log(`  • Produtos ignorados (duplicados): ${skippedCount}`);
         console.log(`  • Erros: ${errorCount}`);
-        console.log(`  • Total processado: ${createdCount + errorCount}`);
+        console.log(`  • Total processado: ${createdCount + skippedCount + errorCount}`);
         
         return { 
             created: createdCount, 
+            skipped: skippedCount,
             errors: errorCount 
         };
         
@@ -276,4 +203,3 @@ if (require.main === module) {
 }
 
 module.exports = { uploadToShopify };
-
