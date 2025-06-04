@@ -174,29 +174,33 @@ function calculatePriceWithVAT(price) {
 
 // Função para processar imagens extras
 // Função para processar imagens extras
-function processExtraImages(extraImagesJson) {
+// Função para processar imagens extras
+function processExtraImages(extraImagesJson ) {
     if (!extraImagesJson || extraImagesJson.trim() === '') return [];
     
     try {
-        // Limpar string antes de fazer parse
         let cleanJson = extraImagesJson.trim();
         
-        // Remover aspas extras se existirem
+        // Remover aspas externas se existirem
         if (cleanJson.startsWith('"') && cleanJson.endsWith('"')) {
             cleanJson = cleanJson.slice(1, -1);
         }
         
-        // Escapar aspas internas se necessário
-        cleanJson = cleanJson.replace(/\\"/g, '"');
+        // Corrigir aspas duplas escapadas incorretamente
+        cleanJson = cleanJson.replace(/""/g, '"');
+        
+        console.log('🔍 JSON limpo:', cleanJson.substring(0, 100) + '...');
         
         const parsed = JSON.parse(cleanJson);
         if (parsed.details && Array.isArray(parsed.details)) {
             // Filtrar apenas imagens grandes (não thumbnails)
-            return parsed.details.filter(img => !img.includes('_thumb'));
+            const images = parsed.details.filter(img => !img.includes('_thumb'));
+            console.log(`📸 ${images.length} imagens encontradas`);
+            return images;
         }
     } catch (e) {
         console.log('⚠️ Aviso: Não foi possível processar imagens extras:', e.message);
-        console.log('Dados recebidos:', extraImagesJson.substring(0, 100) + '...');
+        console.log('Dados originais:', extraImagesJson.substring(0, 100) + '...');
         // Retornar array vazio em vez de falhar
         return [];
     }
