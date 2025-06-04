@@ -173,17 +173,32 @@ function calculatePriceWithVAT(price) {
 }
 
 // Função para processar imagens extras
+// Função para processar imagens extras
 function processExtraImages(extraImagesJson) {
-    if (!extraImagesJson) return [];
+    if (!extraImagesJson || extraImagesJson.trim() === '') return [];
     
     try {
-        const parsed = JSON.parse(extraImagesJson);
+        // Limpar string antes de fazer parse
+        let cleanJson = extraImagesJson.trim();
+        
+        // Remover aspas extras se existirem
+        if (cleanJson.startsWith('"') && cleanJson.endsWith('"')) {
+            cleanJson = cleanJson.slice(1, -1);
+        }
+        
+        // Escapar aspas internas se necessário
+        cleanJson = cleanJson.replace(/\\"/g, '"');
+        
+        const parsed = JSON.parse(cleanJson);
         if (parsed.details && Array.isArray(parsed.details)) {
             // Filtrar apenas imagens grandes (não thumbnails)
             return parsed.details.filter(img => !img.includes('_thumb'));
         }
     } catch (e) {
-        console.log('Erro ao processar imagens extras:', e.message);
+        console.log('⚠️ Aviso: Não foi possível processar imagens extras:', e.message);
+        console.log('Dados recebidos:', extraImagesJson.substring(0, 100) + '...');
+        // Retornar array vazio em vez de falhar
+        return [];
     }
     
     return [];
