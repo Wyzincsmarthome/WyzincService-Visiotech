@@ -1,1 +1,112 @@
+name: Processamento CSV Visiotech
+
+on:
+  # Execução semanal (domingos às 02:00 UTC)
+  schedule:
+    - cron: '0 2 * * 0'
+  
+  # Execução manual
+  workflow_dispatch:
+    inputs:
+      csv_file:
+        description: 'Nome do ficheiro CSV na pasta csv-input/'
+        required: false
+        default: 'visiotech_connect.csv'
+  
+  # Execução quando novo CSV é adicionado
+  push:
+    paths:
+      - 'csv-input/*.csv'
+
+jobs:
+  process-csv:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout código
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        
+    - name: Instalar dependências
+      run: |
+        npm install
+        
+    - name: Criar diretórios necessários
+      run: |
+        mkdir -p csv-input
+        mkdir -p csv-output
+        mkdir -p logs
+        
+    - name: Verificar ficheiros CSV disponíveis
+      run: |
+        echo "📁 Ficheiros CSV disponíveis:"
+        ls -la csv-input/ || echo "Nenhum ficheiro encontrado"
+        
+    - name: Processar CSV Visiotech
+      run: |
+        echo "🚀 Iniciando processamento CSV..."
+        echo "⏰ Timestamp: $(date)"
+        
+        # Encontrar ficheiro CSV mais recente
+        CSV_FILE=$(ls -t csv-input/*.csv 2>/dev/null | head -n1)
+        
+        if [ -z "$CSV_FILE" ]; then
+          echo "❌ Nenhum ficheiro CSV encontrado na pasta csv-input/"
+          exit 1
+        fi
+        
+        echo "📄 Processando ficheiro: $CSV_FILE"
+        
+        # Executar processamento
+        node csv-processor/process_csv.js "$CSV_FILE" "csv-output/shopify_products_$(date +%Y%m%d_%H%M%S).csv" 2>&1 | tee logs/processing_$(date +%Y%m%d_%H%M%S).log
+        
+    - name: Upload CSV processado
+      if: success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: shopify-csv-${{ github.run_number }}
+        path: |
+          csv-output/*.csv
+          logs/*.log
+        retention-days: 30
+        
+    - name: Notificar Discord (Sucesso)
+      if: success()
+      env:
+        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      run: |
+        if [ ! -z "$DISCORD_WEBHOOK_URL" ]; then
+          PROCESSED_COUNT=$(grep "Produtos processados:" logs/*.log | tail -1 | grep -o '[0-9]\+' || echo "0")
+          TOTAL_LINES=$(grep "Total linhas Shopify:" logs/*.log | tail -1 | grep -o '[0-9]\+' || echo "0")
+          
+          curl -H "Content-Type: application/json" \
+               -X POST \
+               -d "{\"content\":\"✅ **CSV Visiotech processado com sucesso!**\n📊 **Produtos processados:** $PROCESSED_COUNT\n📄 **Linhas geradas:** $TOTAL_LINES\n⏰ **Data:** $(date)\n🔗 **Download:** GitHub Actions Artifacts\"}" \
+               "$DISCORD_WEBHOOK_URL"
+        fi
+        
+    - name: Notificar Discord (Erro)
+      if: failure()
+      env:
+        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      run: |
+        if [ ! -z "$DISCORD_WEBHOOK_URL" ]; then
+          curl -H "Content-Type: application/json" \
+               -X POST \
+               -d "{\"content\":\"❌ **Erro no processamento CSV Visiotech**\n⏰ **Data:** $(date)\n🔗 **Logs:** GitHub Actions\"}" \
+               "$DISCORD_WEBHOOK_URL"
+        fi
+        
+    - name: Upload logs em caso de erro
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: error-logs-${{ github.run_number }}
+        path: logs/
+        retention-days: 7
+
 
