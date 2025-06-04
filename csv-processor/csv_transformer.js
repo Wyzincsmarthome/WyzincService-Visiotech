@@ -51,34 +51,19 @@ const TRANSLATIONS = {
     'azul': 'azul',
     'verde': 'verde',
     'amarillo': 'amarelo',
-    'botón': 'botão',
+    'gris': 'cinzento',
+    'detector': 'detetor',
+    'camara': 'câmara',
+    'sensor': 'sensor',
     'alarma': 'alarme',
-    'incendio': 'incêndio',
-    'seguridad': 'segurança',
-    'inalámbrico': 'sem fios',
-    'batería': 'bateria',
-    'alimentación': 'alimentação',
-    'instalación': 'instalação',
-    'compatible': 'compatível',
-    'unidades': 'unidades',
-    'pack': 'pack',
-    'manual': 'manual',
-    'instrucciones': 'instruções',
-    'material': 'material',
-    'montaje': 'montagem',
-    'personalizable': 'personalizável',
-    'herramienta': 'ferramenta',
-    'reposición': 'reposição',
-    'chavero': 'porta-chaves',
-    'acceso': 'acesso',
-    'contacto': 'contacto',
-    'tecnología': 'tecnologia',
-    'memoria': 'memória',
-    'capacidad': 'capacidade',
-    'funcionamiento': 'funcionamento',
-    'temperatura': 'temperatura',
-    'dimensiones': 'dimensões',
-    'peso': 'peso'
+    'control': 'controlo',
+    'remoto': 'remoto',
+    'inteligente': 'inteligente',
+    'inalambrico': 'sem fios',
+    'bateria': 'bateria',
+    'alimentacion': 'alimentação',
+    'instalacion': 'instalação',
+    'configuracion': 'configuração'
 };
 
 // Função para corrigir encoding
@@ -86,18 +71,19 @@ function fixEncoding(text) {
     if (!text) return '';
     
     const encodingFixes = {
-        'Ã§Ã£o': 'ção',
-        'Ã§': 'ç',
-        'Ã£': 'ã',
         'Ã¡': 'á',
-        'Ã©': 'é',
-        'Ã­': 'í',
-        'Ã³': 'ó',
-        'Ãº': 'ú',
         'Ã ': 'à',
         'Ã¢': 'â',
+        'Ã£': 'ã',
+        'Ã¤': 'ä',
+        'Ã©': 'é',
         'Ãª': 'ê',
+        'Ã­': 'í',
+        'Ã³': 'ó',
+        'Ãµ': 'õ',
         'Ã´': 'ô',
+        'Ãº': 'ú',
+        'Ã§': 'ç',
         'Ã¼': 'ü',
         'Ã±': 'ñ',
         'reposiÃ§Ã£o': 'reposição',
@@ -155,12 +141,11 @@ function mapCategory(category) {
     return 'Gadgets Diversos';
 }
 
-// Função para gerar handle
+// Função para gerar handle único
 function generateHandle(name) {
     if (!name) return '';
     
-    return name
-        .toLowerCase()
+    return name.toLowerCase()
         .replace(/[^a-z0-9]/g, '-')
         .replace(/-+/g, '-')
         .replace(/^-|-$/g, '');
@@ -168,56 +153,37 @@ function generateHandle(name) {
 
 // Função para calcular preço com IVA
 function calculatePriceWithVAT(price) {
-    if (!price || isNaN(price)) return 0;
-    return (parseFloat(price) * 1.23).toFixed(2);
+    const vatRate = 1.23; // 23% IVA
+    return (parseFloat(price) * vatRate).toFixed(2);
 }
 
-// Função para processar imagens extras
-// Função para processar imagens extras
-// Função para processar imagens extras
-function processExtraImages(extraImagesJson ) {
-    if (!extraImagesJson || extraImagesJson.trim() === '') return [];
+// Função CORRIGIDA para processar imagens extras
+function processExtraImages(extraImagesJson) {
+    if (!extraImagesJson) return [];
     
     try {
-        let cleanJson = extraImagesJson.trim();
-        
-        // Remover aspas externas se existirem
-        if (cleanJson.startsWith('"') && cleanJson.endsWith('"')) {
-            cleanJson = cleanJson.slice(1, -1);
-        }
-        
-        // Corrigir aspas duplas escapadas incorretamente
-        cleanJson = cleanJson.replace(/""/g, '"');
-        
-        console.log('🔍 JSON limpo:', cleanJson.substring(0, 100) + '...');
-        
-        const parsed = JSON.parse(cleanJson);
+        const parsed = JSON.parse(extraImagesJson);
         if (parsed.details && Array.isArray(parsed.details)) {
-            // Filtrar apenas imagens grandes (não thumbnails)
-            const images = parsed.details.filter(img => !img.includes('_thumb'));
-            console.log(`📸 ${images.length} imagens encontradas`);
-            return images;
+            // Filtrar apenas imagens principais (não thumbnails)
+            return parsed.details.filter(url => !url.includes('_thumb'));
         }
-    } catch (e) {
-        console.log('⚠️ Aviso: Não foi possível processar imagens extras:', e.message);
-        console.log('Dados originais:', extraImagesJson.substring(0, 100) + '...');
-        // Retornar array vazio em vez de falhar
-        return [];
+    } catch (error) {
+        console.log('Erro ao processar imagens extras:', error.message);
     }
     
     return [];
 }
 
-// Função principal de transformação
+// Função CORRIGIDA para transformar produto
 function transformProduct(visiProduct) {
-    // Verificar se marca é aprovada
+    // Verificar marca aprovada
     const brand = normalizeBrand(visiProduct.brand);
     if (!brand) {
-        return null; // Pular produto se marca não aprovada
+        return null; // Pular produtos de marcas não aprovadas
     }
     
-    // Processar dados básicos
-    const title = translateText(visiProduct.content || visiProduct.name);
+    // CORREÇÃO: Usar short_description como título (mais descritivo)
+    const title = translateText(visiProduct.short_description || visiProduct.name);
     const handle = generateHandle(visiProduct.name);
     const category = mapCategory(visiProduct.category);
     const tags = `${brand}, ${category}`;
@@ -238,14 +204,18 @@ function transformProduct(visiProduct) {
     const specifications = translateText(visiProduct.specifications || '');
     const bodyHtml = description + (specifications ? '<br><br><strong>Especificações:</strong><br>' + specifications : '');
     
-    // Processar imagens
+    // CORREÇÃO: Processar imagens corretamente
     const mainImage = visiProduct.image_path || '';
     const extraImages = processExtraImages(visiProduct.extra_images_paths);
     
     // Status
     const status = visiProduct.published === '1' ? 'active' : 'draft';
     
-    return {
+    // CORREÇÃO: Criar múltiplas linhas para múltiplas imagens (formato Shopify)
+    const products = [];
+    
+    // Primeira linha com imagem principal
+    const baseProduct = {
         'Handle': handle,
         'Title': title,
         'Body (HTML)': bodyHtml,
@@ -293,11 +263,68 @@ function transformProduct(visiProduct) {
         'Included / International': 'TRUE',
         'Price / International': '',
         'Compare At Price / International': '',
-        'Status': status,
-        // Campos extras para imagens adicionais
-        'Extra Images': extraImages.join(','),
-        'Related Products': visiProduct.related_products || ''
+        'Status': status
     };
+    
+    products.push(baseProduct);
+    
+    // CORREÇÃO: Adicionar linhas para imagens extras
+    extraImages.forEach((imageUrl, index) => {
+        const imageProduct = {
+            'Handle': handle,
+            'Title': '', // Vazio para imagens adicionais
+            'Body (HTML)': '',
+            'Vendor': '',
+            'Product Category': '',
+            'Type': '',
+            'Tags': '',
+            'Published': '',
+            'Option1 Name': '',
+            'Option1 Value': '',
+            'Option2 Name': '',
+            'Option2 Value': '',
+            'Option3 Name': '',
+            'Option3 Value': '',
+            'Variant SKU': '',
+            'Variant Grams': '',
+            'Variant Inventory Tracker': '',
+            'Variant Inventory Qty': '',
+            'Variant Inventory Policy': '',
+            'Variant Fulfillment Service': '',
+            'Variant Price': '',
+            'Variant Compare At Price': '',
+            'Variant Requires Shipping': '',
+            'Variant Taxable': '',
+            'Variant Barcode': '',
+            'Image Src': imageUrl,
+            'Image Position': (index + 2).toString(), // Posição 2, 3, 4, etc.
+            'Image Alt Text': title,
+            'Gift Card': '',
+            'SEO Title': '',
+            'SEO Description': '',
+            'Google Shopping / Google Product Category': '',
+            'Google Shopping / Gender': '',
+            'Google Shopping / Age Group': '',
+            'Google Shopping / MPN': '',
+            'Google Shopping / Condition': '',
+            'Google Shopping / Custom Product': '',
+            'Variant Image': '',
+            'Variant Weight Unit': '',
+            'Variant Tax Code': '',
+            'Cost per item': '',
+            'Included / United States': '',
+            'Price / United States': '',
+            'Compare At Price / United States': '',
+            'Included / International': '',
+            'Price / International': '',
+            'Compare At Price / International': '',
+            'Status': ''
+        };
+        
+        products.push(imageProduct);
+    });
+    
+    return products;
 }
 
 module.exports = {
@@ -307,4 +334,4 @@ module.exports = {
     CATEGORY_MAPPING
 };
 
-
+                                 
