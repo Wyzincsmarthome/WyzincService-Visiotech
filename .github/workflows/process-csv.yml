@@ -12,6 +12,14 @@ on:
         description: 'Nome do ficheiro CSV na pasta csv-input/'
         required: false
         default: 'visiotech_connect.csv'
+      upload_to_shopify:
+        description: 'Upload automático para Shopify?'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
   
   # Execução quando novo CSV é adicionado
   push:
@@ -64,6 +72,36 @@ jobs:
         # Executar processamento
         node csv-processor/process_csv.js "$CSV_FILE" "csv-output/shopify_products_$(date +%Y%m%d_%H%M%S).csv" 2>&1 | tee logs/processing_$(date +%Y%m%d_%H%M%S).log
         
+    - name: Configurar variáveis de ambiente para Shopify
+      env:
+        SHOPIFY_STORE_URL: ${{ secrets.SHOPIFY_STORE_URL }}
+        SHOPIFY_ACCESS_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN }}
+      run: |
+        echo "SHOPIFY_STORE_URL=$SHOPIFY_STORE_URL" >> .env
+        echo "SHOPIFY_ACCESS_TOKEN=$SHOPIFY_ACCESS_TOKEN" >> .env
+        
+    - name: Upload para Shopify (Automático)
+      if: success() && (github.event.inputs.upload_to_shopify != 'false')
+      env:
+        SHOPIFY_STORE_URL: ${{ secrets.SHOPIFY_STORE_URL }}
+        SHOPIFY_ACCESS_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN }}
+      run: |
+        echo "🚀 Iniciando upload para Shopify..."
+        echo "⏰ Timestamp: $(date)"
+        
+        # Encontrar ficheiro CSV gerado mais recente
+        SHOPIFY_CSV=$(ls -t csv-output/shopify_products_*.csv 2>/dev/null | head -n1)
+        
+        if [ -z "$SHOPIFY_CSV" ]; then
+          echo "❌ Nenhum ficheiro CSV Shopify encontrado"
+          exit 1
+        fi
+        
+        echo "📄 Fazendo upload: $SHOPIFY_CSV"
+        
+        # Executar upload
+        node csv-processor/upload_to_shopify.js "$SHOPIFY_CSV" 2>&1 | tee logs/upload_$(date +%Y%m%d_%H%M%S).log
+        
     - name: Upload CSV processado
       if: success()
       uses: actions/upload-artifact@v4
@@ -80,12 +118,21 @@ jobs:
         DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       run: |
         if [ ! -z "$DISCORD_WEBHOOK_URL" ]; then
-          PROCESSED_COUNT=$(grep "Produtos processados:" logs/*.log | tail -1 | grep -o '[0-9]\+' || echo "0")
-          TOTAL_LINES=$(grep "Total linhas Shopify:" logs/*.log | tail -1 | grep -o '[0-9]\+' || echo "0")
+          PROCESSED_COUNT=$(grep "Produtos processados:" logs/processing*.log | tail -1 | grep -o '[0-9]\+' || echo "0")
+          TOTAL_LINES=$(grep "Total linhas Shopify:" logs/processing*.log | tail -1 | grep -o '[0-9]\+' || echo "0")
+          
+          # Verificar se houve upload
+          if [ -f logs/upload*.log ]; then
+            CREATED_COUNT=$(grep "Produtos criados:" logs/upload*.log | tail -1 | grep -o '[0-9]\+' || echo "0")
+            UPDATED_COUNT=$(grep "Produtos atualizados:" logs/upload*.log | tail -1 | grep -o '[0-9]\+' || echo "0")
+            UPLOAD_STATUS="✅ **Upload concluído!**\n📦 **Criados:** $CREATED_COUNT\n🔄 **Atualizados:** $UPDATED_COUNT"
+          else
+            UPLOAD_STATUS="📁 **CSV gerado** (upload não executado)"
+          fi
           
           curl -H "Content-Type: application/json" \
                -X POST \
-               -d "{\"content\":\"✅ **CSV Visiotech processado com sucesso!**\n📊 **Produtos processados:** $PROCESSED_COUNT\n📄 **Linhas geradas:** $TOTAL_LINES\n⏰ **Data:** $(date)\n🔗 **Download:** GitHub Actions Artifacts\"}" \
+               -d "{\"content\":\"✅ **CSV Visiotech processado com sucesso!**\n📊 **Produtos processados:** $PROCESSED_COUNT\n📄 **Linhas geradas:** $TOTAL_LINES\n$UPLOAD_STATUS\n⏰ **Data:** $(date)\n🔗 **Download:** GitHub Actions Artifacts\"}" \
                "$DISCORD_WEBHOOK_URL"
         fi
         
@@ -108,5 +155,3 @@ jobs:
         name: error-logs-${{ github.run_number }}
         path: logs/
         retention-days: 7
-
-
