@@ -25,6 +25,7 @@ function parseCSV(csvContent, delimiter = ';') {
 }
 
 // Função para gerar CSV Shopify
+// Função para gerar CSV Shopify
 function generateShopifyCSV(products) {
     const headers = [
         'Handle', 'Title', 'Body (HTML)', 'Vendor', 'Product Category', 'Type', 'Tags',
@@ -47,7 +48,15 @@ function generateShopifyCSV(products) {
 
     products.forEach(product => {
         const row = headers.map(header => {
-            const value = product[header] || '';
+            let value = product[header];
+            
+            // CORREÇÃO: Garantir que value é sempre uma string
+            if (value === null || value === undefined) {
+                value = '';
+            } else if (typeof value !== 'string') {
+                value = String(value);
+            }
+            
             // Escapar aspas e vírgulas
             if (value.includes(',') || value.includes('"') || value.includes('\n')) {
                 return `"${value.replace(/"/g, '""')}"`;
