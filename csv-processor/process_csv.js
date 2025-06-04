@@ -25,7 +25,6 @@ function parseCSV(csvContent, delimiter = ';') {
 }
 
 // Função para gerar CSV Shopify
-// Função para gerar CSV Shopify
 function generateShopifyCSV(products) {
     const headers = [
         'Handle', 'Title', 'Body (HTML)', 'Vendor', 'Product Category', 'Type', 'Tags',
@@ -43,20 +42,12 @@ function generateShopifyCSV(products) {
         'Included / International', 'Price / International', 'Compare At Price / International',
         'Status'
     ];
-
+    
     let csv = headers.join(',') + '\n';
-
+    
     products.forEach(product => {
         const row = headers.map(header => {
-            let value = product[header];
-            
-            // CORREÇÃO: Garantir que value é sempre uma string
-            if (value === null || value === undefined) {
-                value = '';
-            } else if (typeof value !== 'string') {
-                value = String(value);
-            }
-            
+            const value = product[header] || '';
             // Escapar aspas e vírgulas
             if (value.includes(',') || value.includes('"') || value.includes('\n')) {
                 return `"${value.replace(/"/g, '""')}"`;
@@ -65,97 +56,78 @@ function generateShopifyCSV(products) {
         });
         csv += row.join(',') + '\n';
     });
-
+    
     return csv;
 }
 
-// Função principal
+// Função principal CORRIGIDA
 async function processVisiCSV(inputPath, outputPath) {
     try {
         console.log('🚀 Iniciando processamento CSV Visiotech...');
-
+        
         // Ler ficheiro CSV
         const csvContent = fs.readFileSync(inputPath, 'utf-8');
         console.log('📁 Ficheiro CSV carregado');
-
+        
         // Parsear CSV
         const visiProducts = parseCSV(csvContent, ';');
         console.log(`📊 ${visiProducts.length} produtos encontrados no CSV`);
-
-        // Transformar produtos
-        const shopifyProducts = [];
+        
+        // CORREÇÃO: Transformar produtos com múltiplas imagens
+        const allShopifyProducts = [];
         let processedCount = 0;
         let skippedCount = 0;
-
-        // CORREÇÃO: Usar for loop simples em vez de forEach para melhor controlo de erros
-        for (let index = 0; index < visiProducts.length; index++) {
-            const visiProduct = visiProducts[index];
+        
+        visiProducts.forEach((visiProduct, index) => {
+            const transformedProducts = transformProduct(visiProduct);
             
-            try {
-                const transformed = transformProduct(visiProduct);
-                if (transformed) {
-                    shopifyProducts.push(transformed);
-                    processedCount++;
-                    
-                    // Log a cada 100 produtos para não sobrecarregar
-                    if (processedCount % 100 === 0) {
-                        console.log(`✅ Processados ${processedCount} produtos...`);
-                    }
+            if (transformedProducts) {
+                // transformProduct agora retorna array de produtos (produto + imagens)
+                if (Array.isArray(transformedProducts)) {
+                    allShopifyProducts.push(...transformedProducts);
                 } else {
-                    skippedCount++;
+                    allShopifyProducts.push(transformedProducts);
                 }
-            } catch (productError) {
+                
+                processedCount++;
+                console.log(`✅ Produto ${index + 1}: ${visiProduct.name} (${visiProduct.brand}) → Processado`);
+            } else {
                 skippedCount++;
-                console.log(`❌ Erro no produto ${index + 1}: ${productError.message}`);
+                console.log(`⏭️ Produto ${index + 1}: ${visiProduct.name} (${visiProduct.brand}) → Marca não aprovada`);
             }
-        }
-
+        });
+        
         // Gerar CSV Shopify
-        console.log('📝 Gerando CSV Shopify...');
-        const shopifyCSV = generateShopifyCSV(shopifyProducts);
-
+        const shopifyCSV = generateShopifyCSV(allShopifyProducts);
+        
         // Guardar ficheiro
         fs.writeFileSync(outputPath, shopifyCSV, 'utf-8');
-
+        
         console.log('\n🎉 Processamento concluído!');
         console.log(`📊 Estatísticas:`);
-        console.log(`  • Produtos processados: ${processedCount}`);
-        console.log(`  • Produtos ignorados: ${skippedCount}`);
-        console.log(`  • Total linhas Shopify: ${shopifyProducts.length}`);
+        console.log(`   • Produtos processados: ${processedCount}`);
+        console.log(`   • Produtos ignorados: ${skippedCount}`);
+        console.log(`   • Total linhas Shopify: ${allShopifyProducts.length}`);
         console.log(`📁 Ficheiro gerado: ${outputPath}`);
-
-        // Relatório de marcas processadas
-        const brandCounts = {};
-        shopifyProducts.forEach(product => {
-            if (product.Vendor) {
-                brandCounts[product.Vendor] = (brandCounts[product.Vendor] || 0) + 1;
-            }
-        });
-
-        console.log('\n🏷️ Marcas processadas:');
-        Object.entries(brandCounts).forEach(([brand, count]) => {
-            console.log(`   • ${brand}: ${count} produtos`);
-        });
-
+        
         return {
             processed: processedCount,
             skipped: skippedCount,
-            total: shopifyProducts.length,
-            brands: brandCounts
+            totalLines: allShopifyProducts.length,
+            outputFile: outputPath
         };
-
+        
     } catch (error) {
-        console.error('🚨 Erro no processamento:', error.message);
-        console.error('Stack trace:', error.stack);
+        console.error('❌ Erro no processamento:', error.message);
         throw error;
     }
 }
 
 // Executar se chamado diretamente
 if (require.main === module) {
-    const inputFile = process.argv[2] || 'input/visiotech_connect.csv';
-    const outputFile = process.argv[3] || 'output/shopify_products.csv';
-
+    const inputFile = process.argv[2] || 'csv-input/visiotech_connect.csv';
+    const outputFile = process.argv[3] || `csv-output/shopify_products_${new Date().toISOString().slice(0,10).replace(/-/g,'')}_${new Date().toTimeString().slice(0,8).replace(/:/g,'')}.csv`;
+    
     processVisiCSV(inputFile, outputFile)
         .then(result => {
             console.log('\n✅ Processamento concluído com sucesso!');
@@ -168,3 +140,4 @@ if (require.main === module) {
 }
 
 module.exports = { processVisiCSV };
+
