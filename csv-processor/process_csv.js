@@ -113,26 +113,39 @@ async function processVisiCSV(inputPath, outputPath) {
         let skippedCount = 0;
         
         visiProducts.forEach((visiProduct, index) => {
-            const transformed = transformProduct(visiProduct);
-            
-            if (transformed) {
-                shopifyProducts.push(transformed);
+            try {
+                const transformed = transformProduct(visiProduct);
                 
-                // Processar imagens extras
-                const extraImages = visiProduct.extra_images_paths 
-                    ? JSON.parse(visiProduct.extra_images_paths).details || []
-                    : [];
-                
-                if (extraImages.length > 1) {
-                    const extraImageProducts = processExtraImages(transformed, extraImages);
-                    shopifyProducts.push(...extraImageProducts);
+                if (transformed) {
+                    shopifyProducts.push(transformed);
+                    
+                    // Processar imagens extras de forma segura
+                    try {
+                        const extraImagesField = visiProduct.extra_images_paths || '';
+                        if (extraImagesField && extraImagesField.trim() !== '') {
+                            // Usar a função do transformer que já está corrigida
+                            const extraImages = require('./csv_transformer').processExtraImages ? 
+                                require('./csv_transformer').processExtraImages(extraImagesField) : [];
+                            
+                            if (extraImages.length > 1) {
+                                const extraImageProducts = processExtraImages(transformed, extraImages);
+                                shopifyProducts.push(...extraImageProducts);
+                            }
+                        }
+                    } catch (imageError) {
+                        console.log(`⚠️ Erro nas imagens do produto ${index + 1}: ${imageError.message}`);
+                        // Continuar sem as imagens extras
+                    }
+                    
+                    processedCount++;
+                    console.log(`✅ Produto ${index + 1}: ${visiProduct.name} (${visiProduct.brand}) → Processado`);
+                } else {
+                    skippedCount++;
+                    console.log(`⏭️ Produto ${index + 1}: ${visiProduct.name} (${visiProduct.brand}) → Marca não aprovada`);
                 }
-                
-                processedCount++;
-                console.log(`✅ Produto ${index + 1}: ${visiProduct.name} (${visiProduct.brand}) → Processado`);
-            } else {
+            } catch (productError) {
                 skippedCount++;
-                console.log(`⏭️ Produto ${index + 1}: ${visiProduct.name} (${visiProduct.brand}) → Marca não aprovada`);
+                console.log(`❌ Erro no produto ${index + 1}: ${productError.message}`);
             }
         });
         
@@ -192,5 +205,3 @@ if (require.main === module) {
 }
 
 module.exports = { processVisiCSV };
-
-
