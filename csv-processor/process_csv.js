@@ -115,7 +115,7 @@ console.log(`🚀 MODO PRODUÇÃO: Processando ${testProducts.length} produtos t
         let processedCount = 0;
         let skippedCount = 0;
         
-        visiProducts.forEach((visiProduct, index) => {
+        testProducts.forEach((visiProduct, index) => {
             try {
                 const transformed = transformProduct(visiProduct);
                 
