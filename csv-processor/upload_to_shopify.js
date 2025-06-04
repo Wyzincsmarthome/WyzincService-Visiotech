@@ -12,7 +12,7 @@ function createShopifyClient() {
     
     return createAdminRestApiClient({
         storeDomain: storeDomain,
-        apiVersion: '2023-04',
+        apiVersion: '2024-07', // CORREÇÃO: Versão API atualizada
         accessToken: process.env.SHOPIFY_ACCESS_TOKEN,
     });
 }
@@ -118,15 +118,16 @@ function convertToShopifyProduct(csvProduct) {
     };
 }
 
-// Função para verificar se produto já existe
+// Função CORRIGIDA para verificar se produto já existe
 async function checkProductExists(client, sku) {
     try {
         if (!sku) return null;
         
+        // CORREÇÃO: Usar query parameters em vez de body para GET request
         const response = await client.get('/products', {
-            data: {
+            searchParams: {
                 fields: 'id,title,variants',
-                limit: 250
+                limit: '250'
             }
         });
         
@@ -149,7 +150,24 @@ async function checkProductExists(client, sku) {
     }
 }
 
-// Função principal CORRIGIDA (sem limites)
+// Função SIMPLIFICADA - criar produtos sem verificação de duplicados
+async function createProductOnly(client, productData) {
+    try {
+        const response = await client.post('/products', {
+            data: { product: productData }
+        });
+        
+        if (response.data && response.data.product) {
+            return response.data.product;
+        } else {
+            throw new Error('Resposta inválida da API');
+        }
+    } catch (error) {
+        throw error;
+    }
+}
+
+// Função principal CORRIGIDA e SIMPLIFICADA
 async function uploadToShopify(csvFilePath) {
     try {
         console.log('🚀 Iniciando upload para Shopify...');
@@ -176,11 +194,9 @@ async function uploadToShopify(csvFilePath) {
         const client = createShopifyClient();
         
         let createdCount = 0;
-        let updatedCount = 0;
-        let skippedCount = 0;
         let errorCount = 0;
         
-        // CORREÇÃO: Processar TODOS os produtos (sem limite)
+        // SIMPLIFICAÇÃO: Apenas criar produtos (sem verificação de duplicados)
         for (let i = 0; i < csvProducts.length; i++) {
             const csvProduct = csvProducts[i];
             
@@ -190,34 +206,14 @@ async function uploadToShopify(csvFilePath) {
                 }
                 
                 const productData = convertToShopifyProduct(csvProduct);
-                const sku = csvProduct['Variant SKU'];
                 
-                // Verificar se produto já existe
-                const existingProduct = await checkProductExists(client, sku);
+                // Criar produto diretamente
+                const createdProduct = await createProductOnly(client, productData);
                 
-                if (existingProduct) {
-                    // Produto existe - atualizar
-                    const updateResponse = await client.put(`/products/${existingProduct.id}`, {
-                        data: { product: productData }
-                    });
-                    
-                    if (updateResponse.data && updateResponse.data.product) {
-                        updatedCount++;
-                        if ((i + 1) % 10 === 0) {
-                            console.log(`🔄 Produto atualizado: ${csvProduct.Title}`);
-                        }
-                    }
-                } else {
-                    // Produto não existe - criar
-                    const createResponse = await client.post('/products', {
-                        data: { product: productData }
-                    });
-                    
-                    if (createResponse.data && createResponse.data.product) {
-                        createdCount++;
-                        if ((i + 1) % 10 === 0) {
-                            console.log(`✅ Produto criado: ${csvProduct.Title}`);
-                        }
+                if (createdProduct) {
+                    createdCount++;
+                    if ((i + 1) % 10 === 0) {
+                        console.log(`✅ Produto criado: ${csvProduct.Title} (ID: ${createdProduct.id})`);
                     }
                 }
                 
@@ -227,7 +223,7 @@ async function uploadToShopify(csvFilePath) {
                 // Log de progresso a cada 50 produtos
                 if ((i + 1) % 50 === 0) {
                     console.log(`📊 Progresso: ${i + 1}/${csvProducts.length} (${Math.round((i + 1) / csvProducts.length * 100)}%)`);
-                    console.log(`   • Criados: ${createdCount} | Atualizados: ${updatedCount} | Erros: ${errorCount}`);
+                    console.log(`   • Criados: ${createdCount} | Erros: ${errorCount}`);
                 }
                 
             } catch (error) {
@@ -236,6 +232,10 @@ async function uploadToShopify(csvFilePath) {
                     console.log(`⏸️ Rate limit atingido, aguardando 10 segundos...`);
                     await new Promise(resolve => setTimeout(resolve, 10000));
                     i--; // Retry este produto
+                } else if (error.message.includes('already exists') || error.message.includes('duplicate')) {
+                    console.log(`⚠️ Produto já existe: ${csvProduct.Title}`);
+                    // Não contar como erro se produto já existe
+                    errorCount--;
                 } else {
                     console.error(`❌ Erro no produto ${csvProduct.Title}: ${error.message}`);
                 }
@@ -245,15 +245,11 @@ async function uploadToShopify(csvFilePath) {
         console.log('\n🎉 Upload concluído!');
         console.log(`📊 Estatísticas finais:`);
         console.log(`  • Produtos criados: ${createdCount}`);
-        console.log(`  • Produtos atualizados: ${updatedCount}`);
-        console.log(`  • Produtos ignorados: ${skippedCount}`);
         console.log(`  • Erros: ${errorCount}`);
-        console.log(`  • Total processado: ${createdCount + updatedCount + skippedCount + errorCount}`);
+        console.log(`  • Total processado: ${createdCount + errorCount}`);
         
         return { 
             created: createdCount, 
-            updated: updatedCount,
-            skipped: skippedCount,
             errors: errorCount 
         };
         
