@@ -1447,6 +1447,40 @@ function translateText(text) {
     return translatedText;
 }
 
+// Função para normalizar marca (primeira letra maiúscula, resto minúsculo)
+function normalizeBrand(brand) {
+    if (!brand || typeof brand !== 'string') return '';
+    
+    // Converter para primeira letra maiúscula, resto minúsculo
+    return brand.charAt(0).toUpperCase() + brand.slice(1).toLowerCase();
+}
+
+// Função para converter EAN de notação científica para número completo
+function formatEAN(eanValue) {
+    if (!eanValue) return '';
+    
+    // Converter para string se for número
+    let eanStr = String(eanValue);
+    
+    // Se contém notação científica (E+ ou e+)
+    if (eanStr.includes('E+') || eanStr.includes('e+')) {
+        try {
+            // Converter para número e depois para string sem notação científica
+            const num = parseFloat(eanStr);
+            // Usar toFixed(0) para remover decimais e notação científica
+            eanStr = num.toFixed(0);
+        } catch (error) {
+            console.log(`⚠️ Erro ao converter EAN: ${eanValue}`);
+            return eanValue;
+        }
+    }
+    
+    // Remover vírgulas se existirem
+    eanStr = eanStr.replace(/,/g, '');
+    
+    return eanStr;
+}
+
 // Função para processar imagens extras
 function processExtraImages(extraImagesJson) {
     if (!extraImagesJson || typeof extraImagesJson !== 'string') {
@@ -1495,26 +1529,39 @@ function transformProduct(visiProduct) {
     try {
         // Dados básicos
         const name = visiProduct.name || '';
-        const brand = visiProduct.brand || '';
-        const title = translateText(visiProduct.short_description || name);
+        const brand = normalizeBrand(visiProduct.brand || ''); // CORREÇÃO 3: Normalizar marca
+        
+        // CORREÇÃO 5: Usar short_description se disponível, senão usar name
+        const title = visiProduct.short_description && visiProduct.short_description.trim() !== '' 
+            ? translateText(visiProduct.short_description) 
+            : translateText(name);
+            
         const description = translateText(visiProduct.description || '');
         const specifications = translateText(visiProduct.specifications || '');
         const content = translateText(visiProduct.content || '');
         
+        // CORREÇÃO 4: Combinar descrição + especificações técnicas
+        let fullDescription = description;
+        if (specifications && specifications.trim() !== '') {
+            fullDescription += specifications.trim() !== '' ? `\n\n<h3>Especificações Técnicas</h3>\n${specifications}` : '';
+        }
+        
         // Preços
         const basePrice = parseFloat(visiProduct.precio_venta_cliente_final) || 0;
-        const priceWithVAT = (basePrice * 1.23).toFixed(2); // IVA 23%
+        const priceWithVAT = basePrice > 0 ? (basePrice * 1.23).toFixed(2) : '1.00'; // CORREÇÃO 5: Fallback para 1.00
         const comparePrice = parseFloat(visiProduct.PVP) || 0;
-        const costPrice = parseFloat(visiProduct.precio_neto_compra) || 0; // CUSTO POR ITEM
+        const costPrice = parseFloat(visiProduct.precio_neto_compra) || 0;
         
-        // Stock
+        // CORREÇÃO 2: Stock alto = 10 (não 100)
         const stockLevel = visiProduct.stock || 'low';
-        const inventoryQty = stockLevel === 'high' ? 100 : stockLevel === 'medium' ? 50 : 10;
+        const inventoryQty = stockLevel === 'high' ? 10 : stockLevel === 'medium' ? 5 : 1;
         
         // Categoria e tags
         const category = translateText(visiProduct.category || '');
         const categoryParent = translateText(visiProduct.category_parent || '');
-        const tags = `${brand}, ${category}`.replace(/^,\s*|,\s*$/g, '');
+        
+        // CORREÇÃO 3 e 5: Tags com marca normalizada e categoria
+        const tags = [brand, category, categoryParent].filter(tag => tag && tag.trim() !== '').join(', ');
         
         // Status
         const published = visiProduct.published === '1' ? 'active' : 'draft';
@@ -1522,6 +1569,9 @@ function transformProduct(visiProduct) {
         
         // Imagem principal
         const mainImage = visiProduct.image_path || '';
+        
+        // CORREÇÃO 6: EAN formatado corretamente
+        const eanFormatted = formatEAN(visiProduct.ean);
         
         // Handle único
         const handle = name.toLowerCase()
@@ -1534,11 +1584,11 @@ function transformProduct(visiProduct) {
         const baseProduct = {
             'Handle': handle,
             'Title': title,
-            'Body (HTML)': description,
-            'Vendor': brand,
+            'Body (HTML)': fullDescription, // CORREÇÃO 4: Descrição + especificações
+            'Vendor': brand, // CORREÇÃO 3: Marca normalizada
             'Product Category': '',
             'Type': category,
-            'Tags': tags,
+            'Tags': tags, // CORREÇÃO 3 e 5: Tags completas
             'Published': 'TRUE',
             'Option1 Name': '',
             'Option1 Value': '',
@@ -1549,14 +1599,14 @@ function transformProduct(visiProduct) {
             'Variant SKU': visiProduct.name,
             'Variant Grams': '',
             'Variant Inventory Tracker': 'shopify',
-            'Variant Inventory Qty': inventoryQty,
+            'Variant Inventory Qty': inventoryQty, // CORREÇÃO 2: Stock correto
             'Variant Inventory Policy': 'deny',
             'Variant Fulfillment Service': 'manual',
             'Variant Price': priceWithVAT,
             'Variant Compare At Price': comparePrice > 0 ? comparePrice.toFixed(2) : '',
             'Variant Requires Shipping': 'TRUE',
             'Variant Taxable': 'TRUE',
-            'Variant Barcode': visiProduct.ean || '',
+            'Variant Barcode': eanFormatted, // CORREÇÃO 6: EAN formatado
             'Image Src': mainImage,
             'Image Position': '1',
             'Image Alt Text': title,
@@ -1572,7 +1622,7 @@ function transformProduct(visiProduct) {
             'Variant Image': '',
             'Variant Weight Unit': 'g',
             'Variant Tax Code': '',
-            'Cost per item': costPrice > 0 ? costPrice.toFixed(2) : '', // CORRIGIDO: Agora mapeia o custo
+            'Cost per item': costPrice > 0 ? costPrice.toFixed(2) : '',
             'Included / United States': 'TRUE',
             'Price / United States': '',
             'Compare At Price / United States': '',
@@ -1585,7 +1635,7 @@ function transformProduct(visiProduct) {
         // Array de produtos (produto base + imagens extras)
         const products = [baseProduct];
         
-        // Adicionar linhas para imagens extras
+        // CORREÇÃO 1: Adicionar linhas para imagens extras
         const extraImages = processExtraImages(visiProduct.extra_images_paths);
         
         extraImages.forEach((imageUrl, index) => {
@@ -1772,6 +1822,8 @@ module.exports = {
     transformVisiCSVToShopify,
     transformProduct,
     translateText,
-    processExtraImages
+    processExtraImages,
+    normalizeBrand,
+    formatEAN
 };
 
