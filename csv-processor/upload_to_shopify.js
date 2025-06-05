@@ -81,8 +81,12 @@ function parseShopifyCSV(csvContent) {
                     product[header] = values[index] || '';
                 });
                 
-                // Se tem Handle, é um novo produto
-                if (product['Handle'] && product['Handle'].trim() !== '') {
+                // CORREÇÃO: Ignorar linhas que são apenas HTML de especificações
+                if (product['Handle'] && 
+                    product['Handle'].trim() !== '' && 
+                    !product['Handle'].startsWith('<') && 
+                    !product['Handle'].includes('Especificações Técnicas')) {
+                    
                     if (currentProduct) {
                         products.push(currentProduct);
                     }
@@ -92,19 +96,17 @@ function parseShopifyCSV(csvContent) {
                     if (validProductCount % 100 === 0) {
                         console.log(`📦 Produtos válidos encontrados: ${validProductCount}`);
                     }
-                } else if (currentProduct) {
-                    // Se não tem Handle, é uma imagem extra do produto atual
-                    if (product['Image Src'] && !currentProduct.extraImages) {
+                } else if (currentProduct && product['Image Src'] && product['Image Src'].trim() !== '') {
+                    // Se não tem Handle mas tem imagem, é uma imagem extra do produto atual
+                    if (!currentProduct.extraImages) {
                         currentProduct.extraImages = [];
                     }
                     
-                    if (product['Image Src']) {
-                        currentProduct.extraImages.push({
-                            src: product['Image Src'],
-                            position: parseInt(product['Image Position'] || '1'),
-                            alt: product['Image Alt Text'] || ''
-                        });
-                    }
+                    currentProduct.extraImages.push({
+                        src: product['Image Src'],
+                        position: parseInt(product['Image Position'] || '1'),
+                        alt: product['Image Alt Text'] || ''
+                    });
                 }
             } catch (error) {
                 console.error(`❌ Erro ao processar linha ${i}:`, error.message);
@@ -129,8 +131,10 @@ function parseShopifyCSV(csvContent) {
 function convertToShopifyProduct(csvProduct) {
     try {
         // Validar campos obrigatórios
-        if (!csvProduct['Title'] || !csvProduct['Handle']) {
-            console.log('⚠️ Produto sem título ou handle:', csvProduct['Handle'] || 'desconhecido');
+        if (!csvProduct['Title'] || !csvProduct['Handle'] || 
+            csvProduct['Title'].startsWith('<') || 
+            csvProduct['Handle'].startsWith('<')) {
+            console.log('⚠️ Produto sem título ou handle válido:', csvProduct['Handle'] || 'desconhecido');
             return null;
         }
         
@@ -234,11 +238,12 @@ async function createProduct(client, shopifyProduct) {
     try {
         console.log(`🚀 Criando produto: ${shopifyProduct.title}`);
         
-        // Criar produto via API
-        const response = await client.post({
-            path: 'products',
+        // CORREÇÃO: Usar método correto para API Shopify
+        const response = await client.request({
+            method: "POST",
+            path: "products",
             data: { product: shopifyProduct },
-            type: 'json'
+            type: "json"
         });
         
         // Verificar resposta por status HTTP
@@ -293,16 +298,21 @@ async function uploadProductsToShopify(csvFilePath) {
         let successCount = 0;
         let errorCount = 0;
         
-        // Processar todos os produtos com rate limiting
-        for (let i = 0; i < csvProducts.length; i++) {
+        // CORREÇÃO: Limitar a 10 produtos para teste
+        const maxProducts = 10;
+        const productsToProcess = csvProducts.slice(0, maxProducts);
+        console.log(`⚠️ Limitando a ${maxProducts} produtos para teste`);
+        
+        // Processar produtos com rate limiting
+        for (let i = 0; i < productsToProcess.length; i++) {
             try {
-                console.log(`\n📦 Processando ${i+1}/${csvProducts.length}: ${csvProducts[i]['Handle']}`);
+                console.log(`\n📦 Processando ${i+1}/${productsToProcess.length}: ${productsToProcess[i]['Handle']}`);
                 
                 // Converter para formato Shopify
-                const shopifyProduct = convertToShopifyProduct(csvProducts[i]);
+                const shopifyProduct = convertToShopifyProduct(productsToProcess[i]);
                 
                 if (!shopifyProduct) {
-                    console.log(`⚠️ Produto inválido: ${csvProducts[i]['Handle']}`);
+                    console.log(`⚠️ Produto inválido: ${productsToProcess[i]['Handle']}`);
                     errorCount++;
                     continue;
                 }
@@ -314,11 +324,11 @@ async function uploadProductsToShopify(csvFilePath) {
                     successCount++;
                 } else {
                     errorCount++;
-                    console.log(`❌ Erro no produto ${csvProducts[i]['Title']}`);
+                    console.log(`❌ Erro no produto ${productsToProcess[i]['Title']}`);
                 }
                 
-                // Rate limiting - esperar 500ms entre requests
-                await new Promise(resolve => setTimeout(resolve, 500));
+                // Rate limiting - esperar 1s entre requests
+                await new Promise(resolve => setTimeout(resolve, 1000));
                 
             } catch (error) {
                 console.error(`❌ Erro no produto ${i+1}:`, error.message);
@@ -328,12 +338,12 @@ async function uploadProductsToShopify(csvFilePath) {
         
         // Resumo final
         console.log('\n📊 Resumo do upload:');
-        console.log(`   • Produtos processados: ${csvProducts.length}`);
+        console.log(`   • Produtos processados: ${productsToProcess.length}`);
         console.log(`   • Sucessos: ${successCount}`);
         console.log(`   • Erros: ${errorCount}`);
         
         return {
-            total: csvProducts.length,
+            total: productsToProcess.length,
             success: successCount,
             errors: errorCount
         };
