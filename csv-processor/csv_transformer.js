@@ -157,18 +157,48 @@ function calculatePriceWithVAT(price) {
     return (parseFloat(price) * vatRate).toFixed(2);
 }
 
-// Função para processar imagens extras
+// Função para processar imagens extras com validação robusta
 function processExtraImages(extraImagesJson) {
     if (!extraImagesJson) return [];
     
     try {
+        // Verificar se é uma string válida
+        if (typeof extraImagesJson !== 'string') {
+            return [];
+        }
+        
+        // Verificar se parece com JSON
+        if (!extraImagesJson.trim().startsWith('{') && !extraImagesJson.trim().startsWith('[')) {
+            return [];
+        }
+        
         const parsed = JSON.parse(extraImagesJson);
+        
         if (parsed.details && Array.isArray(parsed.details)) {
             // Filtrar apenas imagens principais (não thumbnails)
-            return parsed.details.filter(url => !url.includes('_thumb'));
+            const validImages = parsed.details.filter(url => 
+                url && 
+                typeof url === 'string' && 
+                !url.includes('_thumb') &&
+                (url.startsWith('http') || url.startsWith('https'))
+            );
+            return validImages;
         }
+        
+        // Se for array direto
+        if (Array.isArray(parsed)) {
+            const validImages = parsed.filter(url => 
+                url && 
+                typeof url === 'string' && 
+                !url.includes('_thumb') &&
+                (url.startsWith('http') || url.startsWith('https'))
+            );
+            return validImages;
+        }
+        
     } catch (error) {
-        console.log('Erro ao processar imagens extras:', error.message);
+        // Silenciar erros de JSON para não poluir logs
+        // console.log(`Erro ao processar imagens extras: ${error.message}`);
     }
     
     return [];
