@@ -60,7 +60,7 @@ function generateShopifyCSV(products) {
     return csv;
 }
 
-// Função principal CORRIGIDA
+// Função principal
 async function processVisiCSV(inputPath, outputPath) {
     try {
         console.log('🚀 Iniciando processamento CSV Visiotech...');
@@ -73,27 +73,32 @@ async function processVisiCSV(inputPath, outputPath) {
         const visiProducts = parseCSV(csvContent, ';');
         console.log(`📊 ${visiProducts.length} produtos encontrados no CSV`);
         
-        // CORREÇÃO: Transformar produtos com múltiplas imagens
+        // Transformar produtos
         const allShopifyProducts = [];
         let processedCount = 0;
         let skippedCount = 0;
         
         visiProducts.forEach((visiProduct, index) => {
-            const transformedProducts = transformProduct(visiProduct);
-            
-            if (transformedProducts) {
-                // transformProduct agora retorna array de produtos (produto + imagens)
-                if (Array.isArray(transformedProducts)) {
-                    allShopifyProducts.push(...transformedProducts);
-                } else {
-                    allShopifyProducts.push(transformedProducts);
-                }
+            try {
+                const transformedProducts = transformProduct(visiProduct);
                 
-                processedCount++;
-                console.log(`✅ Produto ${index + 1}: ${visiProduct.name} (${visiProduct.brand}) → Processado`);
-            } else {
+                if (transformedProducts && Array.isArray(transformedProducts)) {
+                    // Adicionar todos os produtos (produto base + imagens extras)
+                    allShopifyProducts.push(...transformedProducts);
+                    processedCount++;
+                    console.log(`✅ Produto ${index + 1}: ${visiProduct.name} (${visiProduct.brand}) → Processado`);
+                } else if (transformedProducts) {
+                    // Caso retorne um único produto
+                    allShopifyProducts.push(transformedProducts);
+                    processedCount++;
+                    console.log(`✅ Produto ${index + 1}: ${visiProduct.name} (${visiProduct.brand}) → Processado`);
+                } else {
+                    skippedCount++;
+                    console.log(`⏭️ Produto ${index + 1}: ${visiProduct.name} (${visiProduct.brand}) → Marca não aprovada`);
+                }
+            } catch (error) {
                 skippedCount++;
-                console.log(`⏭️ Produto ${index + 1}: ${visiProduct.name} (${visiProduct.brand}) → Marca não aprovada`);
+                console.log(`❌ Produto ${index + 1}: ${visiProduct.name} → Erro: ${error.message}`);
             }
         });
         
@@ -119,6 +124,7 @@ async function processVisiCSV(inputPath, outputPath) {
         
     } catch (error) {
         console.error('❌ Erro no processamento:', error.message);
+        console.error('Stack trace:', error.stack);
         throw error;
     }
 }
@@ -140,4 +146,4 @@ if (require.main === module) {
 }
 
 module.exports = { processVisiCSV };
-
+        
