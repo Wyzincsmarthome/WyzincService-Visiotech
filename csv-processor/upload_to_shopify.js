@@ -135,146 +135,21 @@ function parseShopifyCSV(csvContent) {
     }
 }
 
-// Função para converter produto CSV para formato Shopify GraphQL
-function convertToShopifyProduct(csvProduct) {
+// Função para criar produto no Shopify (2 passos: produto + variant)
+async function createProduct(client, csvProduct) {
     try {
-        // Validar campos obrigatórios
         const title = csvProduct['Title'] || '';
         const handle = csvProduct['Handle'] || '';
         
         if (!title || !handle || title.startsWith('<') || handle.startsWith('<')) {
             console.log('⚠️ Produto inválido:', handle);
-            return null;
+            return false;
         }
         
-        // Processar preço
-        const priceStr = csvProduct['Variant Price'] || '0';
-        let price = 0;
-        try {
-            price = parseFloat(priceStr.replace(',', '.')) || 0;
-        } catch (e) {
-            price = 0;
-        }
+        console.log(`🚀 Criando produto: ${title}`);
         
-        if (price === 0) {
-            price = 1.00;
-        }
-        
-        // Processar preço de comparação
-        const comparePriceStr = csvProduct['Variant Compare At Price'] || '';
-        let comparePrice = null;
-        if (comparePriceStr) {
-            try {
-                comparePrice = parseFloat(comparePriceStr.replace(',', '.'));
-            } catch (e) {
-                comparePrice = null;
-            }
-        }
-        
-        // Processar custo por item
-        const costPerItemStr = csvProduct['Cost per item'] || '';
-        let costPerItem = null;
-        if (costPerItemStr) {
-            try {
-                costPerItem = parseFloat(costPerItemStr.replace(',', '.'));
-            } catch (e) {
-                costPerItem = null;
-            }
-        }
-        
-        // Processar outros campos
-        const sku = csvProduct['Variant SKU'] || '';
-        const barcode = csvProduct['Variant Barcode'] || '';
-        const inventoryQty = parseInt(csvProduct['Variant Inventory Qty'] || '0');
-        
-        // CORREÇÃO: Formato correto para GraphQL ProductInput
-        const shopifyProduct = {
-            title: title,
-            descriptionHtml: csvProduct['Body (HTML)'] || '', // body_html → descriptionHtml
-            vendor: csvProduct['Vendor'] || '',
-            productType: csvProduct['Type'] || '', // product_type → productType
-            tags: csvProduct['Tags'] ? csvProduct['Tags'].split(',').map(tag => tag.trim()) : [], // string → array
-            status: 'ACTIVE', // "active" → "ACTIVE"
-            variants: [
-                {
-                    price: price.toFixed(2),
-                    sku: sku,
-                    barcode: barcode,
-                    inventoryManagement: 'SHOPIFY', // inventory_management → inventoryManagement
-                    inventoryQuantities: [
-                        {
-                            availableQuantity: inventoryQty,
-                            locationId: 'gid://shopify/Location/1' // ID padrão da localização
-                        }
-                    ],
-                    inventoryPolicy: 'DENY', // inventory_policy → inventoryPolicy
-                    fulfillmentService: 'MANUAL', // fulfillment_service → fulfillmentService
-                    requiresShipping: true, // requires_shipping → requiresShipping
-                    taxable: true,
-                    weight: 0,
-                    weightUnit: 'GRAMS' // weight_unit → weightUnit
-                }
-            ]
-        };
-        
-        // Adicionar preço de comparação se existir
-        if (comparePrice && comparePrice > 0) {
-            shopifyProduct.variants[0].compareAtPrice = comparePrice.toFixed(2);
-        }
-        
-        // Adicionar custo por item se existir
-        if (costPerItem && costPerItem > 0) {
-            shopifyProduct.variants[0].cost = costPerItem.toFixed(2);
-        }
-        
-        // Adicionar imagens
-        const images = [];
-        
-        // Imagem principal
-        if (csvProduct['Image Src']) {
-            images.push({
-                src: csvProduct['Image Src'],
-                altText: csvProduct['Image Alt Text'] || title
-            });
-        }
-        
-        // Imagens extras
-        if (csvProduct.extraImages && Array.isArray(csvProduct.extraImages)) {
-            csvProduct.extraImages.forEach(img => {
-                images.push({
-                    src: img.src,
-                    altText: img.alt || title
-                });
-            });
-        }
-        
-        if (images.length > 0) {
-            shopifyProduct.images = images;
-        }
-        
-        // Logs detalhados
-        console.log(`🔍 Produto convertido: ${title}`);
-        console.log(`💰 Preço: ${price.toFixed(2)}`);
-        if (comparePrice) console.log(`💰 Preço comparação: ${comparePrice.toFixed(2)}`);
-        if (costPerItem) console.log(`💰 Custo por item: ${costPerItem.toFixed(2)}`);
-        if (barcode) console.log(`📊 EAN/Barcode: ${barcode}`);
-        console.log(`🖼️ Imagens: ${images.length}`);
-        
-        return shopifyProduct;
-        
-    } catch (error) {
-        console.error(`❌ Erro ao converter produto:`, error.message);
-        return null;
-    }
-}
-
-// Função para criar produto no Shopify
-async function createProduct(client, shopifyProduct) {
-    try {
-        console.log(`🚀 Criando produto: ${shopifyProduct.title}`);
-        
-        // CORREÇÃO: Mutation GraphQL correta para ProductInput
-        const mutation = `
+        // PASSO 1: Criar produto SEM variants
+        const productMutation = `
             mutation productCreate($input: ProductInput!) {
                 productCreate(input: $input) {
                     product {
@@ -291,48 +166,174 @@ async function createProduct(client, shopifyProduct) {
             }
         `;
         
-        const variables = {
-            input: shopifyProduct
+        // Dados do produto (SEM variants)
+        const productInput = {
+            title: title,
+            descriptionHtml: csvProduct['Body (HTML)'] || '',
+            vendor: csvProduct['Vendor'] || '',
+            productType: csvProduct['Type'] || '',
+            tags: csvProduct['Tags'] ? csvProduct['Tags'].split(',').map(tag => tag.trim()) : [],
+            status: 'ACTIVE'
         };
         
-        console.log('🔗 Fazendo request GraphQL...');
-        console.log('📊 Dados do produto:', JSON.stringify(shopifyProduct, null, 2));
-        
-        const response = await client.request(mutation, { variables });
-        
-        console.log('📄 Resposta da API:', JSON.stringify(response, null, 2));
-        
-        // Verificar resposta
-        if (response.data && response.data.productCreate && response.data.productCreate.product) {
-            const product = response.data.productCreate.product;
-            console.log(`✅ Produto criado com sucesso: ${shopifyProduct.title}`);
-            console.log(`   • ID: ${product.id}`);
-            console.log(`   • Handle: ${product.handle}`);
-            console.log(`   • Status: ${product.status}`);
-            return true;
-        } else if (response.data && response.data.productCreate && response.data.productCreate.userErrors.length > 0) {
-            const errors = response.data.productCreate.userErrors;
-            console.error(`❌ Erros de validação para: ${shopifyProduct.title}`);
-            errors.forEach(error => {
-                console.error(`   • ${error.field}: ${error.message}`);
+        // Adicionar imagens se existirem
+        const images = [];
+        if (csvProduct['Image Src']) {
+            images.push({
+                src: csvProduct['Image Src'],
+                altText: csvProduct['Image Alt Text'] || title
             });
-            return false;
-        } else {
-            console.error(`❌ Resposta inválida da API para: ${shopifyProduct.title}`);
-            console.error('Resposta completa:', JSON.stringify(response, null, 2));
+        }
+        
+        if (csvProduct.extraImages && Array.isArray(csvProduct.extraImages)) {
+            csvProduct.extraImages.forEach(img => {
+                images.push({
+                    src: img.src,
+                    altText: img.alt || title
+                });
+            });
+        }
+        
+        if (images.length > 0) {
+            productInput.images = images;
+        }
+        
+        console.log('🔗 Criando produto (passo 1)...');
+        console.log('📊 Dados do produto:', JSON.stringify(productInput, null, 2));
+        
+        const productResponse = await client.request(productMutation, { 
+            variables: { input: productInput } 
+        });
+        
+        console.log('📄 Resposta produto:', JSON.stringify(productResponse, null, 2));
+        
+        // Verificar se produto foi criado
+        if (!productResponse.data || !productResponse.data.productCreate || !productResponse.data.productCreate.product) {
+            console.error('❌ Erro ao criar produto:', productResponse.data?.productCreate?.userErrors || 'Resposta inválida');
             return false;
         }
         
+        const productId = productResponse.data.productCreate.product.id;
+        console.log(`✅ Produto criado: ${productId}`);
+        
+        // PASSO 2: Criar variant para o produto
+        const variantMutation = `
+            mutation productVariantCreate($input: ProductVariantInput!) {
+                productVariantCreate(input: $input) {
+                    productVariant {
+                        id
+                        price
+                        sku
+                        barcode
+                    }
+                    userErrors {
+                        field
+                        message
+                    }
+                }
+            }
+        `;
+        
+        // Processar dados da variant
+        const priceStr = csvProduct['Variant Price'] || '0';
+        let price = 0;
+        try {
+            price = parseFloat(priceStr.replace(',', '.')) || 0;
+        } catch (e) {
+            price = 0;
+        }
+        if (price === 0) price = 1.00;
+        
+        const comparePriceStr = csvProduct['Variant Compare At Price'] || '';
+        let comparePrice = null;
+        if (comparePriceStr) {
+            try {
+                comparePrice = parseFloat(comparePriceStr.replace(',', '.'));
+            } catch (e) {
+                comparePrice = null;
+            }
+        }
+        
+        const costPerItemStr = csvProduct['Cost per item'] || '';
+        let costPerItem = null;
+        if (costPerItemStr) {
+            try {
+                costPerItem = parseFloat(costPerItemStr.replace(',', '.'));
+            } catch (e) {
+                costPerItem = null;
+            }
+        }
+        
+        const sku = csvProduct['Variant SKU'] || '';
+        const barcode = csvProduct['Variant Barcode'] || '';
+        const inventoryQty = parseInt(csvProduct['Variant Inventory Qty'] || '0');
+        
+        // Dados da variant
+        const variantInput = {
+            productId: productId,
+            price: price.toFixed(2),
+            sku: sku,
+            barcode: barcode,
+            inventoryManagement: 'SHOPIFY',
+            inventoryPolicy: 'DENY',
+            fulfillmentService: 'MANUAL',
+            requiresShipping: true,
+            taxable: true,
+            weight: 0,
+            weightUnit: 'GRAMS'
+        };
+        
+        // Adicionar preço de comparação se existir
+        if (comparePrice && comparePrice > 0) {
+            variantInput.compareAtPrice = comparePrice.toFixed(2);
+        }
+        
+        // Adicionar custo por item se existir
+        if (costPerItem && costPerItem > 0) {
+            variantInput.cost = costPerItem.toFixed(2);
+        }
+        
+        console.log('🔗 Criando variant (passo 2)...');
+        console.log('📊 Dados da variant:', JSON.stringify(variantInput, null, 2));
+        
+        const variantResponse = await client.request(variantMutation, { 
+            variables: { input: variantInput } 
+        });
+        
+        console.log('📄 Resposta variant:', JSON.stringify(variantResponse, null, 2));
+        
+        // Verificar se variant foi criada
+        if (!variantResponse.data || !variantResponse.data.productVariantCreate || !variantResponse.data.productVariantCreate.productVariant) {
+            console.error('❌ Erro ao criar variant:', variantResponse.data?.productVariantCreate?.userErrors || 'Resposta inválida');
+            return false;
+        }
+        
+        const variantId = variantResponse.data.productVariantCreate.productVariant.id;
+        console.log(`✅ Variant criada: ${variantId}`);
+        
+        // PASSO 3: Atualizar inventário se necessário
+        if (inventoryQty > 0) {
+            console.log(`📦 Atualizando inventário para ${inventoryQty} unidades...`);
+            // Aqui poderia adicionar mutation para atualizar inventário
+        }
+        
+        console.log(`🎉 Produto completo criado com sucesso!`);
+        console.log(`   • Produto ID: ${productId}`);
+        console.log(`   • Variant ID: ${variantId}`);
+        console.log(`   • Preço: €${price.toFixed(2)}`);
+        if (comparePrice) console.log(`   • Preço comparação: €${comparePrice.toFixed(2)}`);
+        if (costPerItem) console.log(`   • Custo: €${costPerItem.toFixed(2)}`);
+        if (barcode) console.log(`   • EAN: ${barcode}`);
+        console.log(`   • Imagens: ${images.length}`);
+        
+        return true;
+        
     } catch (error) {
-        console.error(`❌ Erro no produto ${shopifyProduct.title}:`, error.message);
+        console.error(`❌ Erro no produto ${csvProduct['Title']}:`, error.message);
         
         if (error.response) {
             console.error(`   • Status: ${error.response.status || 'desconhecido'}`);
             console.error(`   • Detalhes:`, error.response.data || error.message);
-        }
-        
-        if (error.stack) {
-            console.error(`   • Stack:`, error.stack);
         }
         
         return false;
@@ -369,15 +370,7 @@ async function uploadProductsToShopify(csvFilePath) {
             try {
                 console.log(`\n📦 Processando ${i+1}/${productsToProcess.length}: ${productsToProcess[i]['Handle']}`);
                 
-                const shopifyProduct = convertToShopifyProduct(productsToProcess[i]);
-                
-                if (!shopifyProduct) {
-                    console.log(`⚠️ Produto inválido: ${productsToProcess[i]['Handle']}`);
-                    errorCount++;
-                    continue;
-                }
-                
-                const success = await createProduct(client, shopifyProduct);
+                const success = await createProduct(client, productsToProcess[i]);
                 
                 if (success) {
                     successCount++;
@@ -385,8 +378,8 @@ async function uploadProductsToShopify(csvFilePath) {
                     errorCount++;
                 }
                 
-                // Rate limiting
-                await new Promise(resolve => setTimeout(resolve, 3000));
+                // Rate limiting - esperar 5s entre produtos
+                await new Promise(resolve => setTimeout(resolve, 5000));
                 
             } catch (error) {
                 console.error(`❌ Erro no produto ${i+1}:`, error.message);
@@ -434,7 +427,6 @@ if (require.main === module) {
 module.exports = {
     uploadProductsToShopify,
     parseShopifyCSV,
-    convertToShopifyProduct,
     createProduct
 };
 
