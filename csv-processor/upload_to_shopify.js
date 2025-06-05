@@ -66,7 +66,10 @@ function parseShopifyCSV(csvContent) {
                             Title: product.Title,
                             Vendor: product.Vendor,
                             Price: product['Variant Price'],
+                            ComparePrice: product['Variant Compare At Price'],
                             SKU: product['Variant SKU'],
+                            Barcode: product['Variant Barcode'],
+                            CostPerItem: product['Cost per item'],
                             ImageSrc: product['Image Src'] ? 'SIM' : 'NÃO'
                         });
                     }
@@ -133,7 +136,10 @@ function convertToShopifyProduct(csvProduct) {
         Type: csvProduct.Type,
         Tags: csvProduct.Tags,
         'Variant Price': csvProduct['Variant Price'],
+        'Variant Compare At Price': csvProduct['Variant Compare At Price'],
         'Variant SKU': csvProduct['Variant SKU'],
+        'Variant Barcode': csvProduct['Variant Barcode'],
+        'Cost per item': csvProduct['Cost per item'],
         'Variant Inventory Qty': csvProduct['Variant Inventory Qty'],
         'Image Src': csvProduct['Image Src'] ? 'SIM' : 'NÃO',
         'Body (HTML)': csvProduct['Body (HTML)'] ? 'SIM' : 'NÃO'
@@ -149,6 +155,16 @@ function convertToShopifyProduct(csvProduct) {
     const price = parseFloat(priceStr.replace(',', '.')) || 1.00;
     console.log(`💰 Preço processado: "${priceStr}" → ${price}`);
     
+    // Processar preço de comparação
+    const comparePriceStr = csvProduct['Variant Compare At Price'] || '';
+    const comparePrice = comparePriceStr ? parseFloat(comparePriceStr.replace(',', '.')) : null;
+    console.log(`💰 Preço comparação: "${comparePriceStr}" → ${comparePrice || 'N/A'}`);
+    
+    // Processar custo por item
+    const costPerItemStr = csvProduct['Cost per item'] || '';
+    const costPerItem = costPerItemStr ? parseFloat(costPerItemStr.replace(',', '.')) : null;
+    console.log(`💰 Custo por item: "${costPerItemStr}" → ${costPerItem || 'N/A'}`);
+    
     // Processar quantidade de stock
     const inventoryQtyStr = csvProduct['Variant Inventory Qty'] || '0';
     const inventoryQty = parseInt(inventoryQtyStr) || 0;
@@ -157,6 +173,10 @@ function convertToShopifyProduct(csvProduct) {
     // Processar SKU
     const sku = csvProduct['Variant SKU'] || csvProduct.Handle || '';
     console.log(`🏷️ SKU processado: "${csvProduct['Variant SKU']}" → "${sku}"`);
+    
+    // Processar EAN/Barcode
+    const barcode = csvProduct['Variant Barcode'] || '';
+    console.log(`📊 EAN/Barcode: "${barcode}"`);
     
     const product = {
         title: csvProduct.Title.trim(),
@@ -167,7 +187,10 @@ function convertToShopifyProduct(csvProduct) {
         status: 'active',
         variants: [{
             price: price.toFixed(2),
+            compare_at_price: comparePrice ? comparePrice.toFixed(2) : null,
+            cost: costPerItem ? costPerItem.toFixed(2) : null,
             sku: sku,
+            barcode: barcode,
             inventory_management: 'shopify',
             inventory_quantity: inventoryQty,
             weight: 0,
@@ -193,7 +216,10 @@ function convertToShopifyProduct(csvProduct) {
         product_type: product.product_type,
         tags: product.tags,
         price: product.variants[0].price,
+        compare_at_price: product.variants[0].compare_at_price,
+        cost: product.variants[0].cost,
         sku: product.variants[0].sku,
+        barcode: product.variants[0].barcode,
         inventory_quantity: product.variants[0].inventory_quantity,
         hasImage: !!product.images,
         hasBodyHtml: !!product.body_html
@@ -268,6 +294,10 @@ async function uploadToShopify(csvFilePath) {
                         if (response.data && response.data.product) {
                             console.log(`   • ID: ${response.data.product.id}`);
                             console.log(`   • Handle: ${response.data.product.handle}`);
+                            console.log(`   • Preço: ${response.data.product.variants[0].price}`);
+                            console.log(`   • Preço comparação: ${response.data.product.variants[0].compare_at_price || 'N/A'}`);
+                            console.log(`   • Custo: ${response.data.product.variants[0].cost || 'N/A'}`);
+                            console.log(`   • EAN: ${response.data.product.variants[0].barcode || 'N/A'}`);
                         } else {
                             console.log(`   • Produto criado mas dados da resposta não disponíveis`);
                         }
