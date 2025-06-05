@@ -2,7 +2,7 @@ require('dotenv').config();
 const fs = require('fs');
 const { createAdminApiClient } = require('@shopify/admin-api-client');
 
-// Configurar cliente Shopify
+// Configurar cliente Shopify com versão API mais recente
 function createShopifyClient() {
     const storeUrl = process.env.SHOPIFY_STORE_URL;
     const storeDomain = storeUrl ? storeUrl.replace('https://', '').replace('http://', '') : undefined;
@@ -10,9 +10,13 @@ function createShopifyClient() {
     console.log('🔍 Configurando cliente Shopify...');
     console.log('Store Domain:', storeDomain);
     
+    if (!storeDomain || !process.env.SHOPIFY_ACCESS_TOKEN) {
+        throw new Error('❌ SHOPIFY_STORE_URL e SHOPIFY_ACCESS_TOKEN são obrigatórios');
+    }
+    
     return createAdminApiClient({
         storeDomain: storeDomain,
-        apiVersion: '2024-07',
+        apiVersion: '2025-01', // Versão mais recente
         accessToken: process.env.SHOPIFY_ACCESS_TOKEN,
     });
 }
@@ -58,11 +62,10 @@ function parseShopifyCSV(csvContent) {
         
         // Parsear headers
         const headers = parseCSVLine(lines[0]);
-        console.log(`📋 Headers encontrados: ${headers.slice(0, 5).join(', ')}...`);
+        console.log('📋 Headers encontrados:', headers.slice(0, 5).join(', ') + '...');
         
-        // Parsear produtos
-        const products = [];
-        let currentProduct = null;
+        // Parsear produtos - agrupar por Handle
+        const productGroups = new Map();
         let validProductCount = 0;
         
         for (let i = 1; i < lines.length; i++) {
@@ -80,52 +83,51 @@ function parseShopifyCSV(csvContent) {
                 const title = product['Title'] || '';
                 
                 // Critérios para produto válido
-                const isValidProduct = handle && 
-                    handle.trim() !== '' && 
-                    !handle.startsWith('<') && 
+                const isValidProduct = handle &&
+                    handle.trim() !== '' &&
+                    !handle.startsWith('<') &&
                     !handle.includes('Especificações') &&
                     !handle.includes('table') &&
                     !handle.includes('tbody') &&
                     !handle.includes('Ajax Wireless') &&
-                    title && 
+                    title &&
                     title.trim() !== '' &&
                     !title.startsWith('<') &&
                     !title.includes('table') &&
                     !title.includes('tbody') &&
-                    handle.length < 100 && 
+                    handle.length < 100 &&
                     title.length < 500;
                 
                 if (isValidProduct) {
-                    if (currentProduct) {
-                        products.push(currentProduct);
+                    if (!productGroups.has(handle)) {
+                        productGroups.set(handle, {
+                            ...product,
+                            extraImages: []
+                        });
+                        validProductCount++;
+                        
+                        if (validProductCount % 100 === 0) {
+                            console.log(`📦 Produtos válidos encontrados: ${validProductCount}`);
+                        }
+                    } else {
+                        // Adicionar imagem extra se existir
+                        const imageSrc = product['Image Src'];
+                        if (imageSrc && imageSrc.trim() !== '') {
+                            const existingProduct = productGroups.get(handle);
+                            existingProduct.extraImages.push({
+                                src: imageSrc,
+                                position: parseInt(product['Image Position'] || '1'),
+                                alt: product['Image Alt Text'] || title
+                            });
+                        }
                     }
-                    currentProduct = product;
-                    validProductCount++;
-                    
-                    if (validProductCount % 100 === 0) {
-                        console.log(`📦 Produtos válidos encontrados: ${validProductCount}`);
-                    }
-                } else if (currentProduct && product['Image Src'] && product['Image Src'].trim() !== '') {
-                    if (!currentProduct.extraImages) {
-                        currentProduct.extraImages = [];
-                    }
-                    
-                    currentProduct.extraImages.push({
-                        src: product['Image Src'],
-                        position: parseInt(product['Image Position'] || '1'),
-                        alt: product['Image Alt Text'] || ''
-                    });
                 }
             } catch (error) {
                 console.error(`❌ Erro ao processar linha ${i}:`, error.message);
             }
         }
         
-        // Adicionar último produto
-        if (currentProduct) {
-            products.push(currentProduct);
-        }
-        
+        const products = Array.from(productGroups.values());
         console.log(`✅ ${validProductCount} produtos válidos encontrados no total`);
         return products;
         
@@ -198,11 +200,11 @@ async function createProduct(client, csvProduct) {
             productInput.images = images;
         }
         
-        console.log('🔗 Criando produto (passo 1)...');
+        console.log('🔧 Criando produto (passo 1)...');
         console.log('📊 Dados do produto:', JSON.stringify(productInput, null, 2));
         
-        const productResponse = await client.request(productMutation, { 
-            variables: { input: productInput } 
+        const productResponse = await client.request(productMutation, {
+            variables: { input: productInput }
         });
         
         console.log('📄 Resposta produto:', JSON.stringify(productResponse, null, 2));
@@ -214,7 +216,7 @@ async function createProduct(client, csvProduct) {
         }
         
         const productId = productResponse.data.productCreate.product.id;
-        console.log(`✅ Produto criado: ${productId}`);
+        console.log('✅ Produto criado:', productId);
         
         // PASSO 2: Criar variant para o produto
         const variantMutation = `
@@ -293,11 +295,11 @@ async function createProduct(client, csvProduct) {
             variantInput.cost = costPerItem.toFixed(2);
         }
         
-        console.log('🔗 Criando variant (passo 2)...');
+        console.log('🔧 Criando variant (passo 2)...');
         console.log('📊 Dados da variant:', JSON.stringify(variantInput, null, 2));
         
-        const variantResponse = await client.request(variantMutation, { 
-            variables: { input: variantInput } 
+        const variantResponse = await client.request(variantMutation, {
+            variables: { input: variantInput }
         });
         
         console.log('📄 Resposta variant:', JSON.stringify(variantResponse, null, 2));
@@ -309,7 +311,7 @@ async function createProduct(client, csvProduct) {
         }
         
         const variantId = variantResponse.data.productVariantCreate.productVariant.id;
-        console.log(`✅ Variant criada: ${variantId}`);
+        console.log('✅ Variant criada:', variantId);
         
         // PASSO 3: Atualizar inventário se necessário
         if (inventoryQty > 0) {
@@ -317,7 +319,7 @@ async function createProduct(client, csvProduct) {
             // Aqui poderia adicionar mutation para atualizar inventário
         }
         
-        console.log(`🎉 Produto completo criado com sucesso!`);
+        console.log('🎉 Produto completo criado com sucesso!');
         console.log(`   • Produto ID: ${productId}`);
         console.log(`   • Variant ID: ${variantId}`);
         console.log(`   • Preço: €${price.toFixed(2)}`);
@@ -344,31 +346,31 @@ async function createProduct(client, csvProduct) {
 async function uploadProductsToShopify(csvFilePath) {
     try {
         console.log('🚀 Iniciando upload para Shopify...');
-        console.log(`📁 Ficheiro CSV: ${csvFilePath}`);
+        console.log('📁 Ficheiro CSV:', csvFilePath);
         
         if (!fs.existsSync(csvFilePath)) {
             throw new Error(`Ficheiro não encontrado: ${csvFilePath}`);
         }
         
         const csvContent = fs.readFileSync(csvFilePath, 'utf-8');
-        console.log(`📄 Ficheiro lido: ${csvContent.length} caracteres`);
+        console.log('📄 Ficheiro lido:', csvContent.length, 'caracteres');
         
         const csvProducts = parseShopifyCSV(csvContent);
-        console.log(`🎯 Iniciando processamento de ${csvProducts.length} produtos...`);
+        console.log('🎯 Iniciando processamento de', csvProducts.length, 'produtos...');
         
         const client = createShopifyClient();
         
         let successCount = 0;
         let errorCount = 0;
         
-        // Limitar a 2 produtos para teste
-        const maxProducts = 2;
+        // Limitar a 5 produtos para teste
+        const maxProducts = 5;
         const productsToProcess = csvProducts.slice(0, maxProducts);
         console.log(`⚠️ Limitando a ${maxProducts} produtos para teste`);
         
         for (let i = 0; i < productsToProcess.length; i++) {
             try {
-                console.log(`\n📦 Processando ${i+1}/${productsToProcess.length}: ${productsToProcess[i]['Handle']}`);
+                console.log(`📦 Processando ${i+1}/${productsToProcess.length}: ${productsToProcess[i]['Handle']}`);
                 
                 const success = await createProduct(client, productsToProcess[i]);
                 
@@ -378,8 +380,8 @@ async function uploadProductsToShopify(csvFilePath) {
                     errorCount++;
                 }
                 
-                // Rate limiting - esperar 5s entre produtos
-                await new Promise(resolve => setTimeout(resolve, 5000));
+                // Rate limiting - esperar 2s entre produtos
+                await new Promise(resolve => setTimeout(resolve, 2000));
                 
             } catch (error) {
                 console.error(`❌ Erro no produto ${i+1}:`, error.message);
@@ -387,10 +389,11 @@ async function uploadProductsToShopify(csvFilePath) {
             }
         }
         
-        console.log('\n📊 Resumo do upload:');
+        console.log('📊 Resumo do upload:');
         console.log(`   • Produtos processados: ${productsToProcess.length}`);
         console.log(`   • Sucessos: ${successCount}`);
         console.log(`   • Erros: ${errorCount}`);
+        console.log('🎉 Upload concluído!');
         
         return {
             total: productsToProcess.length,
@@ -399,7 +402,7 @@ async function uploadProductsToShopify(csvFilePath) {
         };
         
     } catch (error) {
-        console.error('🚨 Erro no upload:', error.message);
+        console.error('❌ Erro no upload:', error.message);
         throw error;
     }
 }
@@ -407,26 +410,20 @@ async function uploadProductsToShopify(csvFilePath) {
 // Executar se chamado diretamente
 if (require.main === module) {
     const csvFilePath = process.argv[2];
-    
     if (!csvFilePath) {
-        console.error('❌ Uso: node upload_to_shopify.js <caminho_csv>');
+        console.error('❌ Uso: node upload_to_shopify.js <caminho_para_csv>');
         process.exit(1);
     }
     
     uploadProductsToShopify(csvFilePath)
         .then(result => {
-            console.log('🎉 Upload concluído!');
+            console.log('✅ Upload concluído com sucesso:', result);
             process.exit(0);
         })
         .catch(error => {
-            console.error('🚨 Erro fatal:', error.message);
+            console.error('❌ Erro fatal:', error.message);
             process.exit(1);
         });
 }
 
-module.exports = {
-    uploadProductsToShopify,
-    parseShopifyCSV,
-    createProduct
-};
-
+module.exports = { uploadProductsToShopify };
