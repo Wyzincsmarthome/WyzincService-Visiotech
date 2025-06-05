@@ -10,7 +10,7 @@ function createShopifyClient() {
     console.log('🔍 Configurando cliente Shopify...');
     console.log('Store Domain:', storeDomain);
     
-    // CORREÇÃO: Configuração para versão 3.2.0
+    // CORREÇÃO: Configuração para versão 1.1.0
     return createAdminApiClient({
         storeDomain: storeDomain,
         apiVersion: '2024-07', // Versão atual suportada
@@ -267,7 +267,7 @@ async function createProduct(client, shopifyProduct) {
     try {
         console.log(`🚀 Criando produto: ${shopifyProduct.title}`);
         
-        // CORREÇÃO: Método correto para versão 3.2.0
+        // CORREÇÃO: Método correto para versão 1.1.0 (GraphQL)
         const mutation = `
             mutation productCreate($input: ProductInput!) {
                 productCreate(input: $input) {
@@ -288,7 +288,12 @@ async function createProduct(client, shopifyProduct) {
             input: shopifyProduct
         };
         
+        console.log('🔗 Fazendo request GraphQL...');
+        console.log('📊 Dados do produto:', JSON.stringify(shopifyProduct, null, 2));
+        
         const response = await client.request(mutation, { variables });
+        
+        console.log('📄 Resposta da API:', JSON.stringify(response, null, 2));
         
         // Verificar resposta
         if (response.data && response.data.productCreate && response.data.productCreate.product) {
@@ -306,7 +311,7 @@ async function createProduct(client, shopifyProduct) {
             return false;
         } else {
             console.error(`❌ Resposta inválida da API para: ${shopifyProduct.title}`);
-            console.error('Resposta:', JSON.stringify(response, null, 2));
+            console.error('Resposta completa:', JSON.stringify(response, null, 2));
             return false;
         }
         
@@ -317,6 +322,10 @@ async function createProduct(client, shopifyProduct) {
         if (error.response) {
             console.error(`   • Status: ${error.response.status || 'desconhecido'}`);
             console.error(`   • Detalhes:`, error.response.data || error.message);
+        }
+        
+        if (error.stack) {
+            console.error(`   • Stack:`, error.stack);
         }
         
         return false;
@@ -349,8 +358,8 @@ async function uploadProductsToShopify(csvFilePath) {
         let successCount = 0;
         let errorCount = 0;
         
-        // Limitar a 3 produtos para teste
-        const maxProducts = 3;
+        // Limitar a 2 produtos para teste
+        const maxProducts = 2;
         const productsToProcess = csvProducts.slice(0, maxProducts);
         console.log(`⚠️ Limitando a ${maxProducts} produtos para teste`);
         
@@ -377,8 +386,8 @@ async function uploadProductsToShopify(csvFilePath) {
                     errorCount++;
                 }
                 
-                // Rate limiting - esperar 2s entre requests
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                // Rate limiting - esperar 3s entre requests
+                await new Promise(resolve => setTimeout(resolve, 3000));
                 
             } catch (error) {
                 console.error(`❌ Erro no produto ${i+1}:`, error.message);
