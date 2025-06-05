@@ -112,7 +112,7 @@ function processBatch(products, startIndex, batchSize) {
     };
 }
 
-// Função para gerar CSV Shopify otimizada
+// Função para gerar CSV Shopify com validação robusta
 function generateShopifyCSVOptimized(products) {
     console.log('📝 Gerando CSV Shopify...');
     
@@ -136,19 +136,37 @@ function generateShopifyCSVOptimized(products) {
     let csv = headers.join(',') + '\n';
     
     products.forEach((product, index) => {
-        const row = headers.map(header => {
-            const value = product[header] || '';
-            // Escapar aspas e vírgulas
-            if (value.includes(',') || value.includes('"') || value.includes('\n')) {
-                return `"${value.replace(/"/g, '""')}"`;
+        try {
+            const row = headers.map(header => {
+                let value = product[header];
+                
+                // CORREÇÃO: Validação robusta do valor
+                if (value === null || value === undefined) {
+                    return '';
+                }
+                
+                // Converter para string se não for
+                if (typeof value !== 'string') {
+                    value = String(value);
+                }
+                
+                // Escapar aspas e vírgulas
+                if (value.includes(',') || value.includes('"') || value.includes('\n')) {
+                    return `"${value.replace(/"/g, '""')}"`;
+                }
+                return value;
+            });
+            csv += row.join(',') + '\n';
+            
+            // Mostrar progresso para CSVs grandes
+            if ((index + 1) % 100 === 0) {
+                console.log(`📝 CSV: ${index + 1}/${products.length} linhas geradas...`);
             }
-            return value;
-        });
-        csv += row.join(',') + '\n';
-        
-        // Mostrar progresso para CSVs grandes
-        if ((index + 1) % 100 === 0) {
-            console.log(`📝 CSV: ${index + 1}/${products.length} linhas geradas...`);
+        } catch (error) {
+            console.error(`❌ Erro na linha ${index + 1}:`, error.message);
+            console.error('Produto problemático:', JSON.stringify(product, null, 2));
+            // Continuar com linha vazia em caso de erro
+            csv += headers.map(() => '').join(',') + '\n';
         }
     });
     
