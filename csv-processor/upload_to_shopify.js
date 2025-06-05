@@ -22,7 +22,7 @@ function createShopifyClient() {
     });
 }
 
-// Função para ler CSV Shopify com debugging
+// Função para ler CSV Shopify
 function parseShopifyCSV(csvContent) {
     try {
         const lines = csvContent.split('\n').filter(line => line.trim());
@@ -74,17 +74,13 @@ function parseShopifyCSV(csvContent) {
 
 // Função para converter produto com validação
 function convertToShopifyProduct(csvProduct) {
-    console.log(`🔧 Convertendo produto: ${csvProduct.Title}`);
-    
     // Validar campos obrigatórios
     if (!csvProduct.Title || csvProduct.Title.trim() === '') {
         throw new Error('Título é obrigatório');
     }
     
-    const price = parseFloat(csvProduct['Variant Price']) || 0;
-    if (price <= 0) {
-        console.log(`⚠️ Preço inválido (${csvProduct['Variant Price']}), usando 1.00`);
-    }
+    const price = parseFloat(csvProduct['Variant Price']) || 1.00;
+    const inventoryQty = parseInt(csvProduct['Variant Inventory Qty']) || 0;
     
     const product = {
         title: csvProduct.Title.trim(),
@@ -94,10 +90,12 @@ function convertToShopifyProduct(csvProduct) {
         tags: csvProduct.Tags || '',
         status: 'active',
         variants: [{
-            price: price > 0 ? price.toFixed(2) : '1.00',
+            price: price.toFixed(2),
             sku: csvProduct['Variant SKU'] || '',
             inventory_management: 'shopify',
-            inventory_quantity: parseInt(csvProduct['Variant Inventory Qty']) || 0,
+            inventory_quantity: inventoryQty,
+            weight: 0,
+            weight_unit: 'g'
         }]
     };
     
@@ -109,40 +107,10 @@ function convertToShopifyProduct(csvProduct) {
         }];
     }
     
-    console.log(`✅ Produto convertido:`, {
-        title: product.title,
-        price: product.variants[0].price,
-        sku: product.variants[0].sku,
-        hasImage: !!product.images
-    });
-    
     return product;
 }
 
-// Função para testar credenciais
-async function testShopifyCredentials(client) {
-    try {
-        console.log('🧪 Testando credenciais Shopify...');
-        const response = await client.get('/shop');
-        
-        if (response.data && response.data.shop) {
-            console.log(`✅ Credenciais válidas! Loja: ${response.data.shop.name}`);
-            console.log(`📍 Domínio: ${response.data.shop.domain}`);
-            return true;
-        } else {
-            console.log('❌ Resposta inesperada ao testar credenciais:', response);
-            return false;
-        }
-    } catch (error) {
-        console.error('❌ Erro ao testar credenciais:', error.message);
-        if (error.response) {
-            console.error('📄 Resposta da API:', JSON.stringify(error.response.data, null, 2));
-        }
-        return false;
-    }
-}
-
-// Função principal com debugging completo
+// Função principal com foco na criação de produtos
 async function uploadToShopify(csvFilePath) {
     try {
         console.log('🚀 Iniciando upload para Shopify...');
@@ -168,18 +136,15 @@ async function uploadToShopify(csvFilePath) {
         // Criar cliente Shopify
         const client = createShopifyClient();
         
-        // Testar credenciais primeiro
-        const credentialsValid = await testShopifyCredentials(client);
-        if (!credentialsValid) {
-            throw new Error('Credenciais Shopify inválidas ou problema de conectividade');
-        }
+        // PULAR teste de credenciais e ir direto para criação
+        console.log('⏭️ Pulando teste de credenciais, indo direto para criação de produtos...');
         
         let createdCount = 0;
         let errorCount = 0;
         let skippedCount = 0;
         
-        // Processar apenas os primeiros 5 produtos para debugging
-        const testProducts = csvProducts.slice(0, 5);
+        // Processar apenas os primeiros 3 produtos para debugging
+        const testProducts = csvProducts.slice(0, 3);
         console.log(`🧪 Modo debugging: processando apenas ${testProducts.length} produtos`);
         
         for (let i = 0; i < testProducts.length; i++) {
@@ -191,27 +156,51 @@ async function uploadToShopify(csvFilePath) {
                 const productData = convertToShopifyProduct(csvProduct);
                 
                 console.log('📤 Enviando para Shopify API...');
-                console.log('📋 Dados do produto:', JSON.stringify(productData, null, 2));
+                console.log('📋 Dados básicos:', {
+                    title: productData.title,
+                    vendor: productData.vendor,
+                    price: productData.variants[0].price,
+                    sku: productData.variants[0].sku,
+                    hasImage: !!productData.images
+                });
                 
                 // Criar produto
+                console.log('🔗 Fazendo POST para /products...');
                 const response = await client.post('/products', {
                     data: { product: productData }
                 });
                 
-                console.log('📥 Resposta da API recebida');
-                console.log('📊 Status da resposta:', response.status);
-                console.log('📄 Dados da resposta:', JSON.stringify(response.data, null, 2));
+                console.log('📥 Resposta recebida!');
+                console.log('📊 Status:', response.status);
+                console.log('📊 StatusText:', response.statusText);
                 
-                if (response.data && response.data.product) {
+                // Verificar se response.data existe
+                if (!response.data) {
+                    console.log('❌ response.data é undefined');
+                    console.log('📄 Resposta completa:', JSON.stringify(response, null, 2));
+                    throw new Error('Resposta da API não contém dados');
+                }
+                
+                console.log('📄 Tipo de response.data:', typeof response.data);
+                console.log('📄 Keys de response.data:', Object.keys(response.data));
+                
+                if (response.data.product) {
                     createdCount++;
                     console.log(`✅ Produto criado com sucesso!`);
                     console.log(`   • ID: ${response.data.product.id}`);
                     console.log(`   • Handle: ${response.data.product.handle}`);
                     console.log(`   • Status: ${response.data.product.status}`);
                 } else {
-                    console.log('❌ Resposta não contém produto válido');
-                    console.log('📄 Resposta completa:', JSON.stringify(response, null, 2));
-                    throw new Error('Resposta inválida da API - produto não criado');
+                    console.log('❌ response.data.product não existe');
+                    console.log('📄 Conteúdo de response.data:', JSON.stringify(response.data, null, 2));
+                    
+                    // Verificar se há erros na resposta
+                    if (response.data.errors) {
+                        console.log('🚨 Erros encontrados:', JSON.stringify(response.data.errors, null, 2));
+                        throw new Error(`Erro da API: ${JSON.stringify(response.data.errors)}`);
+                    } else {
+                        throw new Error('Resposta inválida da API - produto não encontrado na resposta');
+                    }
                 }
                 
                 // Delay para evitar rate limiting
@@ -222,13 +211,23 @@ async function uploadToShopify(csvFilePath) {
                 errorCount++;
                 console.error(`❌ Erro detalhado no produto ${csvProduct.Title}:`);
                 console.error(`   • Mensagem: ${error.message}`);
+                console.error(`   • Tipo: ${error.constructor.name}`);
                 
                 if (error.response) {
                     console.error(`   • Status HTTP: ${error.response.status}`);
-                    console.error(`   • Headers: ${JSON.stringify(error.response.headers, null, 2)}`);
-                    console.error(`   • Dados: ${JSON.stringify(error.response.data, null, 2)}`);
+                    console.error(`   • StatusText: ${error.response.statusText}`);
+                    console.error(`   • Headers:`, Object.fromEntries(error.response.headers.entries()));
+                    
+                    // Tentar ler o body da resposta de erro
+                    try {
+                        const errorBody = await error.response.text();
+                        console.error(`   • Body: ${errorBody}`);
+                    } catch (bodyError) {
+                        console.error(`   • Erro ao ler body: ${bodyError.message}`);
+                    }
                 } else if (error.request) {
-                    console.error(`   • Problema de rede: ${JSON.stringify(error.request, null, 2)}`);
+                    console.error(`   • Problema de rede`);
+                    console.error(`   • Request:`, error.request);
                 } else {
                     console.error(`   • Stack trace: ${error.stack}`);
                 }
