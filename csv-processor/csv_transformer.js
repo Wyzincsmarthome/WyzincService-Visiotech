@@ -337,3 +337,4 @@ module.exports = {
     STOCK_MAPPING,
     CATEGORY_MAPPING
 };
+
