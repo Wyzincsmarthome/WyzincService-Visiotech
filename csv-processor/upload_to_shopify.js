@@ -1,6 +1,6 @@
 require('dotenv').config();
 const fs = require('fs');
-const { createAdminRestApiClient } = require('@shopify/admin-api-client');
+const { createAdminApiClient } = require('@shopify/admin-api-client');
 
 // Configurar cliente Shopify
 function createShopifyClient() {
@@ -10,10 +10,10 @@ function createShopifyClient() {
     console.log('🔍 Configurando cliente Shopify...');
     console.log('Store Domain:', storeDomain);
     
-    // CORREÇÃO: Configuração para versão 1.0.1
-    return createAdminRestApiClient({
+    // CORREÇÃO: Configuração para versão 3.2.0
+    return createAdminApiClient({
         storeDomain: storeDomain,
-        apiVersion: '2023-04', // Versão compatível com 1.0.1
+        apiVersion: '2024-07', // Versão atual suportada
         accessToken: process.env.SHOPIFY_ACCESS_TOKEN,
     });
 }
@@ -267,18 +267,46 @@ async function createProduct(client, shopifyProduct) {
     try {
         console.log(`🚀 Criando produto: ${shopifyProduct.title}`);
         
-        // CORREÇÃO: Método correto para versão 1.0.1
-        const response = await client.products.create({
-            product: shopifyProduct
-        });
+        // CORREÇÃO: Método correto para versão 3.2.0
+        const mutation = `
+            mutation productCreate($input: ProductInput!) {
+                productCreate(input: $input) {
+                    product {
+                        id
+                        title
+                        handle
+                    }
+                    userErrors {
+                        field
+                        message
+                    }
+                }
+            }
+        `;
+        
+        const variables = {
+            input: shopifyProduct
+        };
+        
+        const response = await client.request(mutation, { variables });
         
         // Verificar resposta
-        if (response && response.id) {
+        if (response.data && response.data.productCreate && response.data.productCreate.product) {
+            const product = response.data.productCreate.product;
             console.log(`✅ Produto criado com sucesso: ${shopifyProduct.title}`);
-            console.log(`   • ID: ${response.id}`);
+            console.log(`   • ID: ${product.id}`);
+            console.log(`   • Handle: ${product.handle}`);
             return true;
+        } else if (response.data && response.data.productCreate && response.data.productCreate.userErrors.length > 0) {
+            const errors = response.data.productCreate.userErrors;
+            console.error(`❌ Erros de validação para: ${shopifyProduct.title}`);
+            errors.forEach(error => {
+                console.error(`   • ${error.field}: ${error.message}`);
+            });
+            return false;
         } else {
             console.error(`❌ Resposta inválida da API para: ${shopifyProduct.title}`);
+            console.error('Resposta:', JSON.stringify(response, null, 2));
             return false;
         }
         
@@ -287,8 +315,8 @@ async function createProduct(client, shopifyProduct) {
         
         // Log detalhado do erro
         if (error.response) {
-            console.error(`   • Status: ${error.status || 'desconhecido'}`);
-            console.error(`   • Detalhes:`, error.message);
+            console.error(`   • Status: ${error.response.status || 'desconhecido'}`);
+            console.error(`   • Detalhes:`, error.response.data || error.message);
         }
         
         return false;
@@ -321,8 +349,8 @@ async function uploadProductsToShopify(csvFilePath) {
         let successCount = 0;
         let errorCount = 0;
         
-        // Limitar a 5 produtos para teste
-        const maxProducts = 5;
+        // Limitar a 3 produtos para teste
+        const maxProducts = 3;
         const productsToProcess = csvProducts.slice(0, maxProducts);
         console.log(`⚠️ Limitando a ${maxProducts} produtos para teste`);
         
@@ -402,4 +430,4 @@ module.exports = {
     convertToShopifyProduct,
     createProduct
 };
-                    
+
