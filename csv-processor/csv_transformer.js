@@ -157,7 +157,7 @@ function calculatePriceWithVAT(price) {
     return (parseFloat(price) * vatRate).toFixed(2);
 }
 
-// Função CORRIGIDA para processar imagens extras
+// Função para processar imagens extras
 function processExtraImages(extraImagesJson) {
     if (!extraImagesJson) return [];
     
@@ -174,157 +174,161 @@ function processExtraImages(extraImagesJson) {
     return [];
 }
 
-// Função CORRIGIDA para transformar produto
+// Função para transformar produto
 function transformProduct(visiProduct) {
-    // Verificar marca aprovada
-    const brand = normalizeBrand(visiProduct.brand);
-    if (!brand) {
-        return null; // Pular produtos de marcas não aprovadas
-    }
-    
-    // CORREÇÃO: Usar short_description como título (mais descritivo)
-    const title = translateText(visiProduct.short_description || visiProduct.name);
-    const handle = generateHandle(visiProduct.name);
-    const category = mapCategory(visiProduct.category);
-    const tags = `${brand}, ${category}`;
-    
-    // Processar preços
-    const basePrice = parseFloat(visiProduct.precio_venta_cliente_final || 0);
-    const priceWithVAT = calculatePriceWithVAT(basePrice);
-    const comparePrice = visiProduct.PVP && parseFloat(visiProduct.PVP) > basePrice 
-        ? calculatePriceWithVAT(visiProduct.PVP) 
-        : '';
-    
-    // Processar stock
-    const stockLevel = visiProduct.stock ? visiProduct.stock.toLowerCase() : 'none';
-    const inventoryQty = STOCK_MAPPING[stockLevel] || 0;
-    
-    // Processar descrição
-    const description = translateText(visiProduct.description || '');
-    const specifications = translateText(visiProduct.specifications || '');
-    const bodyHtml = description + (specifications ? '<br><br><strong>Especificações:</strong><br>' + specifications : '');
-    
-    // CORREÇÃO: Processar imagens corretamente
-    const mainImage = visiProduct.image_path || '';
-    const extraImages = processExtraImages(visiProduct.extra_images_paths);
-    
-    // Status
-    const status = visiProduct.published === '1' ? 'active' : 'draft';
-    
-    // CORREÇÃO: Criar múltiplas linhas para múltiplas imagens (formato Shopify)
-    const products = [];
-    
-    // Primeira linha com imagem principal
-    const baseProduct = {
-        'Handle': handle,
-        'Title': title,
-        'Body (HTML)': bodyHtml,
-        'Vendor': brand,
-        'Product Category': '',
-        'Type': category,
-        'Tags': tags,
-        'Published': 'TRUE',
-        'Option1 Name': '',
-        'Option1 Value': '',
-        'Option2 Name': '',
-        'Option2 Value': '',
-        'Option3 Name': '',
-        'Option3 Value': '',
-        'Variant SKU': visiProduct.name,
-        'Variant Grams': '',
-        'Variant Inventory Tracker': 'shopify',
-        'Variant Inventory Qty': inventoryQty,
-        'Variant Inventory Policy': 'deny',
-        'Variant Fulfillment Service': 'manual',
-        'Variant Price': priceWithVAT,
-        'Variant Compare At Price': comparePrice,
-        'Variant Requires Shipping': 'TRUE',
-        'Variant Taxable': 'TRUE',
-        'Variant Barcode': visiProduct.ean || '',
-        'Image Src': mainImage,
-        'Image Position': '1',
-        'Image Alt Text': title,
-        'Gift Card': 'FALSE',
-        'SEO Title': `${title} | ${brand}`,
-        'SEO Description': translateText(visiProduct.short_description || ''),
-        'Google Shopping / Google Product Category': '',
-        'Google Shopping / Gender': '',
-        'Google Shopping / Age Group': '',
-        'Google Shopping / MPN': visiProduct.name,
-        'Google Shopping / Condition': 'new',
-        'Google Shopping / Custom Product': 'TRUE',
-        'Variant Image': '',
-        'Variant Weight Unit': 'g',
-        'Variant Tax Code': '',
-        'Cost per item': '',
-        'Included / United States': 'TRUE',
-        'Price / United States': '',
-        'Compare At Price / United States': '',
-        'Included / International': 'TRUE',
-        'Price / International': '',
-        'Compare At Price / International': '',
-        'Status': status
-    };
-    
-    products.push(baseProduct);
-    
-    // CORREÇÃO: Adicionar linhas para imagens extras
-    extraImages.forEach((imageUrl, index) => {
-        const imageProduct = {
+    try {
+        // Verificar marca aprovada
+        const brand = normalizeBrand(visiProduct.brand);
+        if (!brand) {
+            return null; // Pular produtos de marcas não aprovadas
+        }
+        
+        // Usar short_description como título (mais descritivo)
+        const title = translateText(visiProduct.short_description || visiProduct.name);
+        const handle = generateHandle(visiProduct.name);
+        const category = mapCategory(visiProduct.category);
+        const tags = `${brand}, ${category}`;
+        
+        // Processar preços
+        const basePrice = parseFloat(visiProduct.precio_venta_cliente_final || 0);
+        const priceWithVAT = calculatePriceWithVAT(basePrice);
+        const comparePrice = visiProduct.PVP && parseFloat(visiProduct.PVP) > basePrice 
+            ? calculatePriceWithVAT(visiProduct.PVP) 
+            : '';
+        
+        // Processar stock
+        const stockLevel = visiProduct.stock ? visiProduct.stock.toLowerCase() : 'none';
+        const inventoryQty = STOCK_MAPPING[stockLevel] || 0;
+        
+        // Processar descrição
+        const description = translateText(visiProduct.description || '');
+        const specifications = translateText(visiProduct.specifications || '');
+        const bodyHtml = description + (specifications ? '<br><br><strong>Especificações:</strong><br>' + specifications : '');
+        
+        // Processar imagens
+        const mainImage = visiProduct.image_path || '';
+        const extraImages = processExtraImages(visiProduct.extra_images_paths);
+        
+        // Status
+        const status = visiProduct.published === '1' ? 'active' : 'draft';
+        
+        // Criar produto base
+        const baseProduct = {
             'Handle': handle,
-            'Title': '', // Vazio para imagens adicionais
-            'Body (HTML)': '',
-            'Vendor': '',
+            'Title': title,
+            'Body (HTML)': bodyHtml,
+            'Vendor': brand,
             'Product Category': '',
-            'Type': '',
-            'Tags': '',
-            'Published': '',
+            'Type': category,
+            'Tags': tags,
+            'Published': 'TRUE',
             'Option1 Name': '',
             'Option1 Value': '',
             'Option2 Name': '',
             'Option2 Value': '',
             'Option3 Name': '',
             'Option3 Value': '',
-            'Variant SKU': '',
+            'Variant SKU': visiProduct.name,
             'Variant Grams': '',
-            'Variant Inventory Tracker': '',
-            'Variant Inventory Qty': '',
-            'Variant Inventory Policy': '',
-            'Variant Fulfillment Service': '',
-            'Variant Price': '',
-            'Variant Compare At Price': '',
-            'Variant Requires Shipping': '',
-            'Variant Taxable': '',
-            'Variant Barcode': '',
-            'Image Src': imageUrl,
-            'Image Position': (index + 2).toString(), // Posição 2, 3, 4, etc.
+            'Variant Inventory Tracker': 'shopify',
+            'Variant Inventory Qty': inventoryQty,
+            'Variant Inventory Policy': 'deny',
+            'Variant Fulfillment Service': 'manual',
+            'Variant Price': priceWithVAT,
+            'Variant Compare At Price': comparePrice,
+            'Variant Requires Shipping': 'TRUE',
+            'Variant Taxable': 'TRUE',
+            'Variant Barcode': visiProduct.ean || '',
+            'Image Src': mainImage,
+            'Image Position': '1',
             'Image Alt Text': title,
-            'Gift Card': '',
-            'SEO Title': '',
-            'SEO Description': '',
+            'Gift Card': 'FALSE',
+            'SEO Title': `${title} | ${brand}`,
+            'SEO Description': translateText(visiProduct.short_description || ''),
             'Google Shopping / Google Product Category': '',
             'Google Shopping / Gender': '',
             'Google Shopping / Age Group': '',
-            'Google Shopping / MPN': '',
-            'Google Shopping / Condition': '',
-            'Google Shopping / Custom Product': '',
+            'Google Shopping / MPN': visiProduct.name,
+            'Google Shopping / Condition': 'new',
+            'Google Shopping / Custom Product': 'TRUE',
             'Variant Image': '',
-            'Variant Weight Unit': '',
+            'Variant Weight Unit': 'g',
             'Variant Tax Code': '',
             'Cost per item': '',
-            'Included / United States': '',
+            'Included / United States': 'TRUE',
             'Price / United States': '',
             'Compare At Price / United States': '',
-            'Included / International': '',
+            'Included / International': 'TRUE',
             'Price / International': '',
             'Compare At Price / International': '',
-            'Status': ''
+            'Status': status
         };
         
-        products.push(imageProduct);
-    });
-    
-    return products;
+        // Array de produtos (produto base + imagens extras)
+        const products = [baseProduct];
+        
+        // Adicionar linhas para imagens extras
+        extraImages.forEach((imageUrl, index) => {
+            const imageProduct = {
+                'Handle': handle,
+                'Title': '',
+                'Body (HTML)': '',
+                'Vendor': '',
+                'Product Category': '',
+                'Type': '',
+                'Tags': '',
+                'Published': '',
+                'Option1 Name': '',
+                'Option1 Value': '',
+                'Option2 Name': '',
+                'Option2 Value': '',
+                'Option3 Name': '',
+                'Option3 Value': '',
+                'Variant SKU': '',
+                'Variant Grams': '',
+                'Variant Inventory Tracker': '',
+                'Variant Inventory Qty': '',
+                'Variant Inventory Policy': '',
+                'Variant Fulfillment Service': '',
+                'Variant Price': '',
+                'Variant Compare At Price': '',
+                'Variant Requires Shipping': '',
+                'Variant Taxable': '',
+                'Variant Barcode': '',
+                'Image Src': imageUrl,
+                'Image Position': (index + 2).toString(),
+                'Image Alt Text': title,
+                'Gift Card': '',
+                'SEO Title': '',
+                'SEO Description': '',
+                'Google Shopping / Google Product Category': '',
+                'Google Shopping / Gender': '',
+                'Google Shopping / Age Group': '',
+                'Google Shopping / MPN': '',
+                'Google Shopping / Condition': '',
+                'Google Shopping / Custom Product': '',
+                'Variant Image': '',
+                'Variant Weight Unit': '',
+                'Variant Tax Code': '',
+                'Cost per item': '',
+                'Included / United States': '',
+                'Price / United States': '',
+                'Compare At Price / United States': '',
+                'Included / International': '',
+                'Price / International': '',
+                'Compare At Price / International': '',
+                'Status': ''
+            };
+            
+            products.push(imageProduct);
+        });
+        
+        return products;
+        
+    } catch (error) {
+        console.error('Erro ao transformar produto:', visiProduct.name, error.message);
+        return null;
+    }
 }
 
 module.exports = {
@@ -333,5 +337,3 @@ module.exports = {
     STOCK_MAPPING,
     CATEGORY_MAPPING
 };
-
-                                 
