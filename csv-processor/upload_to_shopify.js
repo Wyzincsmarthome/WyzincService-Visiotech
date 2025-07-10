@@ -1,104 +1,83 @@
-const fs = require('fs');
-const csvParse = require('csv-parse/lib/sync');
-const Shopify = require('@shopify/admin-api-client');
-require('dotenv').config();
+// upload_to_shopify.js
+const { Shopify } = require('@shopify/shopify-api');
 
-const SHOPIFY_STORE = process.env.SHOPIFY_STORE;  // ex: 'minhaloja.myshopify.com'
+const SHOPIFY_STORE = process.env.SHOPIFY_STORE; // ex: "minhaloja.myshopify.com"
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 
-const client = new Shopify({
-  domain: SHOPIFY_STORE,
-  accessToken: SHOPIFY_ACCESS_TOKEN,
-});
-
-async function getProductByHandle(handle) {
-  try {
-    const response = await client.rest.Product.all({
-      limit: 1,
-      handle,
-    });
-    if (response.body.products.length > 0) {
-      return response.body.products[0];
-    }
-    return null;
-  } catch (error) {
-    console.error(`Erro a obter produto handle=${handle}:`, error.message);
-    return null;
-  }
+if (!SHOPIFY_STORE || !SHOPIFY_ACCESS_TOKEN) {
+    console.error('🚨 Variáveis de ambiente SHOPIFY_STORE ou SHOPIFY_ACCESS_TOKEN não definidas!');
+    process.exit(1);
 }
 
-async function getProductBySKU(sku) {
-  try {
-    const response = await client.rest.ProductVariant.all({
-      limit: 1,
-      sku,
-    });
-    if (response.body.variants.length > 0) {
-      // Retornar o produto pai
-      const variant = response.body.variants[0];
-      const productResponse = await client.rest.Product.get(variant.product_id);
-      return productResponse.body.product;
+const client = new Shopify.Clients.Rest(SHOPIFY_STORE, SHOPIFY_ACCESS_TOKEN);
+
+async function getProductByHandle(handle) {
+    try {
+        const response = await client.get({
+            path: 'products',
+            query: { handle: handle }
+        });
+        const products = response.body.products || [];
+        return products.length > 0 ? products[0] : null;
+    } catch (error) {
+        console.error(`Erro ao obter produto pelo handle ${handle}:`, error.message);
+        return null;
     }
-    return null;
-  } catch (error) {
-    console.error(`Erro a obter produto SKU=${sku}:`, error.message);
-    return null;
-  }
 }
 
 async function createOrUpdateProduct(productData) {
-  // productData é um objeto com propriedades conforme CSV Shopify
-
-  // Verifica por handle
-  let existingProduct = null;
-  if (productData['Handle']) {
-    existingProduct = await getProductByHandle(productData['Handle']);
-  }
-
-  // Se não encontrado, verifica por SKU da variante principal
-  if (!existingProduct && productData['Variant SKU']) {
-    existingProduct = await getProductBySKU(productData['Variant SKU']);
-  }
-
-  // Construir payload para Shopify API
-  // Aqui convém mapear o CSV para o formato da API (simplificado)
-  const productPayload = {
-    product: {
-      title: productData['Title'],
-      body_html: productData['Body (HTML)'],
-      vendor: productData['Vendor'],
-      product_type: productData['Type'],
-      tags: productData['Tags'],
-      variants: [
-        {
-          sku: productData['Variant SKU'],
-          price: productData['Variant Price'],
-          inventory_quantity: parseInt(productData['Variant Inventory Qty'], 10) || 0,
-          inventory_management: productData['Variant Inventory Tracker'] || 'shopify',
-          weight: parseFloat(productData['Variant Grams']) / 1000 || 0,
-          weight_unit: productData['Variant Weight Unit'] || 'kg',
-          taxable: productData['Variant Taxable'] === 'TRUE',
-          requires_shipping: productData['Variant Requires Shipping'] === 'TRUE',
-          barcode: productData['Variant Barcode'] || undefined,
+    try {
+        const handle = productData['Handle'];
+        if (!handle) {
+            console.error('Produto sem Handle definido.');
+            return { updated: 0, created: 0 };
         }
-      ],
-      images: productData['Image Src'] ? [{ src: productData['Image Src'] }] : [],
-      published: productData['Published'] === 'TRUE',
-    }
-  };
 
-  try {
-    if (existingProduct) {
-      // Atualizar produto existente
-      const productId = existingProduct.id;
-      await client.rest.Product.update(productId, productPayload.product);
-      return { updated: 1, created: 0 };
-    } else {
-      // Criar produto novo
-      await client.rest.Product.create(productPayload.product);
-      return { updated: 0, created: 1 };
+        const existingProduct = await getProductByHandle(handle);
+
+        if (existingProduct) {
+            // Atualizar produto - aqui podes adaptar os campos que queres atualizar
+            const productId = existingProduct.id;
+            await client.put({
+                path: `products/${productId}`,
+                data: { product: productData },
+                type: 'application/json'
+            });
+            console.log(`Produto atualizado: ${handle}`);
+            return { updated: 1, created: 0 };
+        } else {
+            // Criar novo produto
+            await client.post({
+                path: 'products',
+                data: { product: productData },
+                type: 'application/json'
+            });
+            console.log(`Produto criado: ${handle}`);
+            return { updated: 0, created: 1 };
+        }
+    } catch (error) {
+        console.error(`Erro ao criar/atualizar produto ${productData['Handle']}:`, error.message);
+        return { updated: 0, created: 0 };
     }
-  } catch (error) {
-    console.error(`Erro ao criar/atualizar produto ${productData['Handle']}:`, error.message);
-    return { updated: 0,
 }
+
+async function uploadProductsToShopify(products) {
+    let createdCount = 0;
+    let updatedCount = 0;
+
+    for (const product of products) {
+        const result = await createOrUpdateProduct(product);
+        createdCount += result.created;
+        updatedCount += result.updated;
+    }
+
+    console.log(`\nResumo do upload:`);
+    console.log(`• Produtos criados: ${createdCount}`);
+    console.log(`• Produtos atualizados: ${updatedCount}`);
+
+    return { created: createdCount, updated: updatedCount };
+}
+
+module.exports = {
+    uploadProductsToShopify
+};
