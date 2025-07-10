@@ -1,4 +1,4 @@
-name: Process CSV and Upload to Shopify
+name: Processar CSV e Atualizar Shopify
 
 on:
   push:
@@ -6,35 +6,23 @@ on:
       - 'csv-input/**'
       - 'csv-processor/**'
       - '.github/workflows/process-csv.yml'
+      - 'package.json'
 
 jobs:
-  process-upload:
+  process_csv:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout do código
+      - name: Fazer checkout do código
         uses: actions/checkout@v3
 
-      - name: Setup Node.js
+      - name: Instalar Node.js versão 18
         uses: actions/setup-node@v3
         with:
           node-version: 18
 
-      - name: Instalar dependências
+      - name: Instalar dependências do projeto
         run: npm install
 
-      - name: Encontrar ficheiro CSV
-        id: findcsv
-        run: |
-          CSV_FILE=$(ls csv-input/*.csv | head -n 1)
-          echo "CSV_FILE=$CSV_FILE" >> $GITHUB_ENV
-          echo "Ficheiro CSV encontrado: $CSV_FILE"
-
-      - name: Processar CSV e fazer upload
-        env:
-          SHOPIFY_STORE: ${{ secrets.SHOPIFY_STORE }}
-          SHOPIFY_ACCESS_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN }}
-          CSV_FILE: ${{ env.CSV_FILE }}
-        run: |
-          echo "🚀 Iniciando processamento CSV..."
-          node csv-processor/process_csv.js "$CSV_FILE"
+      - name: Executar script de processamento CSV
+        run: node csv-processor/process_csv.js
