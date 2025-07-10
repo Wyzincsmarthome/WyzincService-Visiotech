@@ -101,3 +101,4 @@ async function createOrUpdateProduct(productData) {
   } catch (error) {
     console.error(`Erro ao criar/atualizar produto ${productData['Handle']}:`, error.message);
     return { updated: 0,
+}
