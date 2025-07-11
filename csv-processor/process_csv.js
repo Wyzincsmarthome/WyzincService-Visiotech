@@ -14,6 +14,16 @@ const SHOPIFY_GRAPHQL_ENDPOINT = `https://${SHOPIFY_STORE_URL}/admin/api/${API_V
 const HEADERS = { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN };
 const UNIQUE_PRODUCT_IDENTIFIER = 'name';
 
+// --- DEFINIÇÃO DAS COLUNAS DO CSV ---
+// Este "mapa" garante que o script lê as colunas corretamente.
+const CSV_HEADERS = [
+    'name', 'image_path', 'stock', 'msrp', 'brand', 'description', 'specifications', 
+    'content', 'short_description', 'short_description_html', 'category', 'category_parent', 
+    'precio_neto_compra', 'precio_venta_cliente_final', 'PVP', 'ean', 'published', 
+    'created', 'modified', 'params', 'related_products', 'extra_images_paths', 'category_id'
+];
+
+
 // --- FUNÇÕES DA API SHOPIFY ---
 
 async function getExistingShopifySkus() {
@@ -118,11 +128,12 @@ async function main() {
         const productsToProcess = [];
 
         fs.createReadStream(CSV_INPUT_PATH)
-            .on('error', (err) => { // Adicionado para detetar erros ao abrir o ficheiro
-                console.error(`🚨 Erro ao ler o ficheiro CSV em ${CSV_INPUT_PATH}. Verifique se o caminho e o nome estão corretos.`);
+            .on('error', (err) => {
+                console.error(`🚨 Erro ao ler o ficheiro CSV em ${CSV_INPUT_PATH}.`);
                 throw err;
             })
-            .pipe(csv({ separator: '\t', bom: true }))
+            // CORREÇÃO: Usar o "mapa" de colunas e ignorar a primeira linha do ficheiro
+            .pipe(csv({ separator: '\t', headers: CSV_HEADERS, skipLines: 1 }))
             .on('data', (row) => {
                 try {
                     if (!row.name) return;
@@ -135,7 +146,7 @@ async function main() {
                             if (Array.isArray(extraImages)) {
                                 allImages.push(...extraImages.filter(img => !img.includes('_thumb.')));
                             }
-                        } catch (e) { /* ignorar JSON inválido */ }
+                        } catch (e) { /* ignorar */ }
                     }
 
                     const transformedProduct = {
@@ -167,33 +178,4 @@ async function main() {
                             continue;
                         }
                         
-                        // Pequena pausa para não sobrecarregar a API
-                        await new Promise(resolve => setTimeout(resolve, 500)); 
-                        
-                        if (existingSkus.has(product.sku)) {
-                            const productId = existingSkus.get(product.sku);
-                            await updateShopifyProduct(productId, product);
-                            updatedCount++;
-                        } else {
-                            await createShopifyProduct(product);
-                            createdCount++;
-                        }
-                    }
-
-                    console.log(`\n🎉 Sincronização concluída!`);
-                    console.log(`   - ${createdCount} produtos criados.`);
-                    console.log(`   - ${updatedCount} produtos atualizados.`);
-                } catch (syncError) {
-                    console.error(`🚨 Erro durante a sincronização com a Shopify: ${syncError.message}`);
-                    process.exit(1);
-                }
-            });
-
-    } catch (error) {
-        console.error(`🚨 Erro fatal no processo: ${error.message}`);
-        console.error(error.stack);
-        process.exit(1);
-    }
-}
-
-main();
+                        await new Promise(resolve => setTimeout(resolve
