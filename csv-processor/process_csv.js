@@ -1,5 +1,5 @@
 require('dotenv').config();
-const fs = require('fs');
+const fs =require('fs');
 const path = require('path');
 const csv = require('csv-parser');
 const axios = require('axios');
@@ -12,7 +12,7 @@ const SHOPIFY_LOCATION_ID = process.env.SHOPIFY_LOCATION_ID;
 const API_VERSION = '2025-07';
 const SHOPIFY_GRAPHQL_ENDPOINT = `https://${SHOPIFY_STORE_URL}/admin/api/${API_VERSION}/graphql.json`;
 const HEADERS = { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN };
-const UNIQUE_PRODUCT_IDENTIFIER = 'name';
+const UNIQUE_PRODUCT_IDENTIFIER = 'name'; // A coluna 'name' do CSV funciona como SKU
 
 // --- DEFINIÇÃO DAS COLUNAS DO CSV ---
 const CSV_HEADERS = [
@@ -22,6 +22,42 @@ const CSV_HEADERS = [
     'created', 'modified', 'params', 'related_products', 'extra_images_paths', 'category_id'
 ];
 
+// --- FUNÇÕES AUXILIARES DE TRANSFORMAÇÃO ---
+function parseEan(eanValue) {
+    if (!eanValue || typeof eanValue !== 'string') return '';
+    // Converte notação científica (ex: 4,82E+12) para uma string de número completo
+    if (eanValue.includes('E+')) {
+        try {
+            const [base, exponent] = eanValue.replace(',', '.').split('E+');
+            const num = BigInt(Math.round(parseFloat(base) * Math.pow(10, parseInt(exponent, 10))));
+            return num.toString();
+        } catch (e) {
+            return eanValue; // Devolve o original se a conversão falhar
+        }
+    }
+    return eanValue;
+}
+
+function parseImages(mainImage, extraImagesJson) {
+    const allImages = [mainImage];
+    if (extraImagesJson) {
+        try {
+            const extra = JSON.parse(extraImagesJson).details;
+            if (Array.isArray(extra)) {
+                allImages.push(...extra.filter(img => img && !img.includes('_thumb.')));
+            }
+        } catch (e) { /* Ignorar JSON inválido */ }
+    }
+    return allImages.filter(Boolean).map(src => ({ src }));
+}
+
+function parseStock(stockValue) {
+    const stockLower = (stockValue || '').toLowerCase();
+    if (stockLower.includes('high') || stockLower.includes('disponível')) return 100;
+    if (stockLower.includes('low') || stockLower.includes('reduzido')) return 5;
+    return 0; // 'esgotado', 'sem stock', etc.
+}
+
 
 // --- FUNÇÕES DA API SHOPIFY ---
 
@@ -30,7 +66,7 @@ async function getExistingShopifySkus() {
     const skus = new Map();
     let hasNextPage = true;
     let cursor = null;
-    const query = `query getProducts($cursor: String) { products(first: 250, after: $cursor) { pageInfo { hasNextPage }, edges { cursor, node { id, variants(first: 10) { edges { node { sku } } } } } } }`;
+    const query = `query getProducts($cursor: String) { products(first: 250, after: $cursor) { pageInfo { hasNextPage }, edges { cursor, node { id, variants(first: 1) { edges { node { id, sku } } } } } } }`;
 
     while (hasNextPage) {
         const response = await axios.post(SHOPIFY_GRAPHQL_ENDPOINT, { query, variables: { cursor } }, { headers: HEADERS });
@@ -38,12 +74,10 @@ async function getExistingShopifySkus() {
         const { products } = response.data.data;
         
         for (const productEdge of products.edges) {
-            for (const variantEdge of productEdge.node.variants.edges) {
-                if (variantEdge.node.sku) {
-                    skus.set(variantEdge.node.sku, { productId: productEdge.node.id, variantId: variantEdge.node.id });
-                }
+            const firstVariant = productEdge.node.variants.edges[0]?.node;
+            if (firstVariant?.sku) {
+                skus.set(firstVariant.sku, { productId: productEdge.node.id, variantId: firstVariant.id });
             }
-            // CORREÇÃO: A linha do cursor foi movida para DENTRO do loop 'for'.
             cursor = productEdge.cursor;
         }
         hasNextPage = products.pageInfo.hasNextPage;
@@ -55,6 +89,7 @@ async function getExistingShopifySkus() {
 async function createShopifyProduct(product) {
     console.log(`➕ A criar novo produto: ${product.title}`);
     
+    // PASSO 1: Criar produto base para obter IDs
     const createMutation = `
         mutation productCreate($input: ProductInput!) {
             productCreate(input: $input) {
@@ -84,7 +119,7 @@ async function updateShopifyProduct(ids, product, isNewProduct = false) {
     const mutation = `
         mutation productUpdate($input: ProductInput!) {
             productUpdate(input: $input) {
-                product { id }
+                product { id, title }
                 userErrors { field, message }
             }
         }`;
@@ -102,6 +137,7 @@ async function updateShopifyProduct(ids, product, isNewProduct = false) {
             id: variantId,
             price: product.price,
             sku: product.sku,
+            barcode: product.ean,
             inventoryItem: { tracked: true },
             inventoryQuantities: [{
                 availableQuantity: product.stock,
@@ -136,17 +172,6 @@ async function main() {
                 try {
                     if (!row.name || row.name.trim() === '') return;
 
-                    const eanString = String(row.ean || '').includes('E+') ? BigInt(row.ean).toString() : String(row.ean || '');
-                    const allImages = [row.image_path];
-                    if (row.extra_images_paths) {
-                        try {
-                            const extraImages = JSON.parse(row.extra_images_paths).details;
-                            if (Array.isArray(extraImages)) {
-                                allImages.push(...extraImages.filter(img => img && !img.includes('_thumb.')));
-                            }
-                        } catch (e) { /* ignorar */ }
-                    }
-
                     const transformedProduct = {
                         sku: row[UNIQUE_PRODUCT_IDENTIFIER],
                         title: row.name,
@@ -155,9 +180,9 @@ async function main() {
                         descriptionHtml: row.description || row.short_description_html || '',
                         tags: [row.brand, row.category_parent, row.category].filter(Boolean).join(','),
                         price: (row.PVP || row.msrp || '0').replace(',', '.'),
-                        stock: row.stock === 'high' ? 100 : (row.stock === 'low' ? 5 : 0),
-                        images: allImages.filter(Boolean).map(src => ({ src })),
-                        ean: eanString
+                        stock: parseStock(row.stock),
+                        images: parseImages(row.image_path, row.extra_images_paths),
+                        ean: parseEan(row.ean)
                     };
                     productsToProcess.push(transformedProduct);
                 } catch (transformError) {
