@@ -22,6 +22,7 @@ const CSV_HEADERS = [
     'created', 'modified', 'params', 'related_products', 'extra_images_paths', 'category_id'
 ];
 
+
 // --- FUNÇÕES DA API SHOPIFY ---
 
 async function getExistingShopifySkus() {
@@ -29,7 +30,7 @@ async function getExistingShopifySkus() {
     const skus = new Map();
     let hasNextPage = true;
     let cursor = null;
-    const query = `query getProducts($cursor: String) { products(first: 250, after: $cursor) { pageInfo { hasNextPage }, edges { cursor, node { id, variants(first: 1) { edges { node { id, sku } } } } } } }`;
+    const query = `query getProducts($cursor: String) { products(first: 250, after: $cursor) { pageInfo { hasNextPage }, edges { cursor, node { id, variants(first: 10) { edges { node { sku } } } } } } }`;
 
     while (hasNextPage) {
         const response = await axios.post(SHOPIFY_GRAPHQL_ENDPOINT, { query, variables: { cursor } }, { headers: HEADERS });
@@ -37,13 +38,14 @@ async function getExistingShopifySkus() {
         const { products } = response.data.data;
         
         for (const productEdge of products.edges) {
-            // Apenas um SKU por produto neste fornecedor
-            const firstVariant = productEdge.node.variants.edges[0]?.node;
-            if (firstVariant?.sku) {
-                skus.set(firstVariant.sku, { productId: productEdge.node.id, variantId: firstVariant.id });
+            for (const variantEdge of productEdge.node.variants.edges) {
+                if (variantEdge.node.sku) {
+                    skus.set(variantEdge.node.sku, { productId: productEdge.node.id, variantId: variantEdge.node.id });
+                }
             }
+            // CORREÇÃO: A linha do cursor foi movida para DENTRO do loop 'for'.
+            cursor = productEdge.cursor;
         }
-        cursor = productEdge.cursor;
         hasNextPage = products.pageInfo.hasNextPage;
     }
     console.log(`✅ Encontrados ${skus.size} SKUs existentes.`);
@@ -52,10 +54,11 @@ async function getExistingShopifySkus() {
 
 async function createShopifyProduct(product) {
     console.log(`➕ A criar novo produto: ${product.title}`);
+    
     const createMutation = `
         mutation productCreate($input: ProductInput!) {
             productCreate(input: $input) {
-                product { id, title, variants(first: 1) { edges { node { id } } } }
+                product { id, variants(first: 1) { edges { node { id } } } }
                 userErrors { field, message }
             }
         }`;
@@ -75,7 +78,8 @@ async function createShopifyProduct(product) {
 
 async function updateShopifyProduct(ids, product, isNewProduct = false) {
     const { productId, variantId } = ids;
-    console.log(`🔄 A ${isNewProduct ? 'finalizar' : 'atualizar'} produto: ${product.title}`);
+    const action = isNewProduct ? 'finalizar' : 'atualizar';
+    console.log(`🔄 A ${action} produto: ${product.title}`);
 
     const mutation = `
         mutation productUpdate($input: ProductInput!) {
@@ -107,10 +111,10 @@ async function updateShopifyProduct(ids, product, isNewProduct = false) {
     };
 
     const response = await axios.post(SHOPIFY_GRAPHQL_ENDPOINT, { query: mutation, variables: { input } }, { headers: HEADERS });
-    if (response.data.errors) throw new Error(`Erro GraphQL ao atualizar: ${response.data.errors[0].message}`);
-    if (response.data.data.productUpdate.userErrors.length > 0) throw new Error(`Erro API ao atualizar: ${response.data.data.productUpdate.userErrors[0].message}`);
+    if (response.data.errors) throw new Error(`Erro GraphQL ao ${action}: ${response.data.errors[0].message}`);
+    if (response.data.data.productUpdate.userErrors.length > 0) throw new Error(`Erro API ao ${action}: ${response.data.data.productUpdate.userErrors[0].message}`);
 
-    console.log(`   -> ✅ Produto "${product.title}" ${isNewProduct ? 'finalizado' : 'atualizado'} com sucesso.`);
+    console.log(`   -> ✅ Produto "${product.title}" ${action} com sucesso.`);
 }
 
 // --- FUNÇÃO PRINCIPAL ---
@@ -127,7 +131,6 @@ async function main() {
 
         fs.createReadStream(CSV_INPUT_PATH)
             .on('error', (err) => { throw err; })
-            // CORREÇÃO FINAL: Mudar o separador de tabulação para ponto e vírgula.
             .pipe(csv({ separator: ';', headers: CSV_HEADERS, skipLines: 1 }))
             .on('data', (row) => {
                 try {
