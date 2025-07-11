@@ -1,12 +1,11 @@
 name: Processar CSV e Atualizar Shopify
 
 on:
-  push:
-    paths:
-      - 'csv-input/**'
-      - 'csv-processor/**'
-      - '.github/workflows/process-csv.yml'
-      - 'package.json'
+  # CORRIGIDO: Agendado para correr todas as Segundas-feiras às 08:00
+  schedule:
+    - cron: '0 8 * * 1'
+  # MANTIDO: Permite execução manual para testes
+  workflow_dispatch:
 
 jobs:
   process_csv:
@@ -14,15 +13,23 @@ jobs:
 
     steps:
       - name: Fazer checkout do código
-        uses: actions/checkout@v3
+        # ATUALIZADO: Usar a versão v4 que é a mais recente
+        uses: actions/checkout@v4
 
       - name: Instalar Node.js versão 18
-        uses: actions/setup-node@v3
+        # ATUALIZADO: Usar a versão v4 que é a mais recente
+        uses: actions/setup-node@v4
         with:
           node-version: 18
+          cache: 'npm'
 
       - name: Instalar dependências do projeto
         run: npm install
 
       - name: Executar script de processamento CSV
+        # CORRIGIDO: Adicionar o bloco 'env' para carregar os secrets
+        env:
+          SHOPIFY_STORE_URL: ${{ secrets.SHOPIFY_STORE_URL }}
+          SHOPIFY_ACCESS_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN }}
+          SHOPIFY_LOCATION_ID: ${{ secrets.SHOPIFY_LOCATION_ID }}
         run: node csv-processor/process_csv.js
