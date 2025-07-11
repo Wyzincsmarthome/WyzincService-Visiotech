@@ -9,19 +9,30 @@ const CSV_INPUT_PATH = path.join(__dirname, '../csv-input/visiotech_connect.csv'
 const SHOPIFY_STORE_URL = process.env.SHOPIFY_STORE_URL;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 const SHOPIFY_LOCATION_ID = process.env.SHOPIFY_LOCATION_ID;
-const API_VERSION = '2025-07';
+const API_VERSION = '2024-10'; // Usar uma versão LTS estável
 const SHOPIFY_GRAPHQL_ENDPOINT = `https://${SHOPIFY_STORE_URL}/admin/api/${API_VERSION}/graphql.json`;
 const HEADERS = { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN };
-const UNIQUE_PRODUCT_IDENTIFIER = 'name';
+const SKU_COLUMN_NAME = 'name'; // A coluna 'name' do CSV funciona como SKU
 
-const CSV_HEADERS = [
-    'name', 'image_path', 'stock', 'msrp', 'brand', 'description', 'specifications', 
-    'content', 'short_description', 'short_description_html', 'category', 'category_parent', 
-    'precio_neto_compra', 'precio_venta_cliente_final', 'PVP', 'ean', 'published', 
-    'created', 'modified', 'params', 'related_products', 'extra_images_paths', 'category_id'
-];
+// --- LÓGICA DE TRANSFORMAÇÃO (Inspirada no seu ficheiro csv_transformer.js) ---
 
-// --- FUNÇÕES AUXILIARES DE TRANSFORMAÇÃO ---
+const translations = { 'Sirena': 'Sirene', 'Exterior': 'Exterior', /* Adicione aqui mais traduções se necessário */ };
+
+function translateText(text) {
+    if (!text || typeof text !== 'string') return '';
+    let translatedText = text;
+    for (const [spanish, portuguese] of Object.entries(translations)) {
+        const regex = new RegExp(`\\b${spanish}\\b`, 'gi');
+        translatedText = translatedText.replace(regex, portuguese);
+    }
+    return translatedText;
+}
+
+function normalizeBrand(brand) {
+    if (!brand || typeof brand !== 'string') return '';
+    return brand.charAt(0).toUpperCase() + brand.slice(1).toLowerCase();
+}
+
 function parseEan(eanValue) {
     if (!eanValue || typeof eanValue !== 'string') return '';
     if (eanValue.includes('E+')) {
@@ -30,6 +41,7 @@ function parseEan(eanValue) {
     }
     return eanValue.trim();
 }
+
 function parseImages(mainImage, extraImagesJson) {
     const allImages = [mainImage];
     if (extraImagesJson) {
@@ -38,8 +50,9 @@ function parseImages(mainImage, extraImagesJson) {
             if (Array.isArray(extra)) allImages.push(...extra.filter(img => img && !img.includes('_thumb.')));
         } catch (e) { /* Ignorar */ }
     }
-    return allImages.filter(Boolean).map(src => ({ originalSource: src, altText: "Product Image" }));
+    return allImages.filter(Boolean).map(src => ({ src }));
 }
+
 function parseStock(stockValue) {
     const stockLower = (stockValue || '').toLowerCase();
     if (stockLower.includes('high') || stockLower.includes('disponível')) return 100;
@@ -47,154 +60,134 @@ function parseStock(stockValue) {
     return 0;
 }
 
-// --- FUNÇÕES DA API SHOPIFY ---
+function transformRowToProduct(row) {
+    const brand = normalizeBrand(row.brand || '');
+    const title = translateText(row.short_description || row.name || '');
+    const description = translateText(row.description || '');
+    const specifications = translateText(row.specifications || '');
+    
+    return {
+        sku: row[SKU_COLUMN_NAME],
+        title: title,
+        vendor: brand,
+        productType: translateText(row.category_parent || ''),
+        bodyHtml: `${description}<br><br><h3>Especificações</h3>${specifications}`,
+        tags: [brand, translateText(row.category_parent), translateText(row.category)].filter(Boolean).join(', '),
+        price: (row.PVP || row.precio_venta_cliente_final || row.msrp || '0').replace(',', '.'),
+        stock: parseStock(row.stock),
+        images: parseImages(row.image_path, row.extra_images_paths),
+        ean: parseEan(row.ean)
+    };
+}
 
-async function getExistingShopifySkus() {
-    console.log('🔄 A obter SKUs existentes da Shopify...');
-    const skus = new Map();
+
+// --- LÓGICA DA API SHOPIFY (O processo correto de 3 passos) ---
+
+async function callShopifyApi(query, variables) {
+    try {
+        const response = await axios.post(SHOPIFY_GRAPHQL_ENDPOINT, { query, variables }, { headers: HEADERS });
+        if (response.data.errors) {
+            throw new Error(response.data.errors.map(e => e.message).join(', '));
+        }
+        const responseData = response.data.data;
+        const mutationResultKey = Object.keys(responseData)[0];
+        const mutationResult = responseData[mutationResultKey];
+        if (mutationResult.userErrors && mutationResult.userErrors.length > 0) {
+            throw new Error(mutationResult.userErrors.map(e => `${e.field}: ${e.message}`).join(', '));
+        }
+        return mutationResult;
+    } catch (error) {
+        // Log detalhado do erro da API
+        if (error.response) {
+            console.error('❌ Erro na resposta da API:', JSON.stringify(error.response.data, null, 2));
+        }
+        throw error; // Re-lançar o erro para ser capturado pela função que chamou
+    }
+}
+
+async function getExistingShopifyProducts() {
+    console.log('🔄 A obter produtos existentes da Shopify...');
+    const products = new Map();
     let hasNextPage = true;
     let cursor = null;
-    const query = `query getProducts($cursor: String) { products(first: 250, after: $cursor) { pageInfo { hasNextPage }, edges { cursor, node { id, variants(first: 1) { edges { node { id, sku } } } } } } }`;
+    const query = `query getProducts($cursor: String) { products(first: 250, after: $cursor) { pageInfo { hasNextPage }, edges { cursor, node { id, handle, variants(first: 1) { edges { node { id, sku } } } } } } }`;
+
     while (hasNextPage) {
-        const response = await axios.post(SHOPIFY_GRAPHQL_ENDPOINT, { query, variables: { cursor } }, { headers: HEADERS });
-        if (response.data.errors) throw new Error(`Erro GraphQL ao obter SKUs: ${response.data.errors[0].message}`);
-        const { products } = response.data.data;
-        for (const productEdge of products.edges) {
-            const firstVariant = productEdge.node.variants.edges[0]?.node;
+        const responseData = await callShopifyApi(query, { cursor });
+        const responseProducts = responseData.products;
+        for (const productEdge of responseProducts.edges) {
+            const product = productEdge.node;
+            const firstVariant = product.variants.edges[0]?.node;
             if (firstVariant?.sku) {
-                skus.set(firstVariant.sku, { productId: productEdge.node.id, variantId: firstVariant.id });
+                products.set(firstVariant.sku, { productId: product.id, variantId: firstVariant.id });
             }
             cursor = productEdge.cursor;
         }
-        hasNextPage = products.pageInfo.hasNextPage;
+        hasNextPage = responseProducts.pageInfo.hasNextPage;
     }
-    console.log(`✅ Encontrados ${skus.size} SKUs existentes.`);
-    return skus;
+    console.log(`✅ Encontrados ${products.size} produtos existentes.`);
+    return products;
 }
 
-async function callShopifyApi(query, variables) {
-    const response = await axios.post(SHOPIFY_GRAPHQL_ENDPOINT, { query, variables }, { headers: HEADERS });
-    if (response.data.errors) {
-        throw new Error(response.data.errors.map(e => e.message).join(', '));
-    }
-    return response.data.data;
-}
-
-
-async function manageProduct(ids, product, isNewProduct) {
+async function manageProduct(ids, productData, isNewProduct) {
     const action = isNewProduct ? 'criar' : 'atualizar';
     let { productId, variantId } = ids || {};
 
-    try {
-        console.log(`\n📦 A ${action} produto: ${product.title}`);
+    console.log(`\n📦 A ${action} produto: ${productData.title}`);
 
-        if (isNewProduct) {
-            const createMutation = `
-                mutation productCreate($input: ProductInput!) {
-                    productCreate(input: $input) {
-                        product { id, variants(first: 1) { edges { node { id } } } }
-                        userErrors { field, message }
-                    }
-                }`;
-            const createInput = { input: { title: product.title } };
-            console.log(`   -> Passo 1: Criando esqueleto...`);
-            const createData = await callShopifyApi(createMutation, createInput);
-            if (createData.productCreate.userErrors.length > 0) throw new Error(`API no Passo 1: ${createData.productCreate.userErrors[0].message}`);
-            productId = createData.productCreate.product.id;
-            variantId = createData.productCreate.product.variants.edges[0]?.node?.id;
-            if (!productId || !variantId) throw new Error('Falha ao obter IDs do produto/variante.');
-            console.log(`   -> ✅ Esqueleto criado com ID: ${productId}`);
-        }
-        
-        // PASSO 2: ATUALIZAR A VARIANTE
-        const variantUpdateMutation = `
-            mutation productVariantUpdate($input: ProductVariantInput!) {
-                productVariantUpdate(input: $input) {
-                    userErrors { field, message }
-                }
-            }`;
-        const variantInput = {
-            input: {
-                id: variantId,
-                price: product.price,
-                sku: product.sku,
-                barcode: product.ean,
-                inventoryItem: { tracked: true },
-                inventoryQuantities: [{ availableQuantity: product.stock, locationId: `gid://shopify/Location/${SHOPIFY_LOCATION_ID}` }]
-            }
-        };
-        console.log(`   -> Passo 2: Atualizando variante ${variantId}...`);
-        const variantData = await callShopifyApi(variantUpdateMutation, variantInput);
-        if (variantData.productVariantUpdate.userErrors.length > 0) throw new Error(`API no Passo 2: ${variantData.productVariantUpdate.userErrors[0].message}`);
-        console.log(`   -> ✅ Variante atualizada com preço, SKU e stock.`);
-
-        // PASSO 3: ATUALIZAR O PRODUTO COM OS DETALHES RESTANTES
-        const productUpdateMutation = `
-            mutation productUpdate($input: ProductInput!) {
-                productUpdate(input: $input) {
-                    userErrors { field, message }
-                }
-            }`;
-        const productUpdateInput = {
-            input: {
-                id: productId,
-                descriptionHtml: product.descriptionHtml,
-                vendor: product.vendor,
-                productType: product.productType,
-                tags: product.tags,
-                status: 'ACTIVE'
-            }
-        };
-        console.log(`   -> Passo 3: Adicionando detalhes ao produto ${productId}...`);
-        const productUpdateData = await callShopifyApi(productUpdateMutation, productUpdateInput);
-        if (productUpdateData.productUpdate.userErrors.length > 0) throw new Error(`API no Passo 3: ${productUpdateData.productUpdate.userErrors[0].message}`);
-        console.log(`   -> ✅ Detalhes do produto atualizados.`);
-
-        // PASSO 4 (FINAL): ADICIONAR IMAGENS
-        if (product.images.length > 0) {
-            const imageMutation = `mutation productCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) { productCreateMedia(productId: $productId, media: $media) { userErrors { field, message } } }`;
-            const imageInput = { productId: productId, media: product.images };
-            console.log(`   -> Passo 4: Adicionando ${product.images.length} imagens...`);
-            const imageData = await callShopifyApi(imageMutation, imageInput);
-            if (imageData.productCreateMedia.userErrors.length > 0) console.warn(`   -> ⚠️ Aviso, erro ao adicionar imagens: ${imageData.productCreateMedia.userErrors[0].message}`);
-            else console.log(`   -> ✅ Imagens adicionadas.`);
-        }
-
-        console.log(`   -> 🎉 Produto "${product.title}" ${action} com sucesso.`);
-
-    } catch (error) {
-        console.error(`❌ Erro fatal durante a gestão do produto ${product.title}: ${error.message}`);
-        throw error;
+    // PASSO 1: Criar o esqueleto (só para produtos novos)
+    if (isNewProduct) {
+        const createMutation = `mutation productCreate($input: ProductInput!) { productCreate(input: $input) { product { id, variants(first: 1) { edges { node { id } } } } userErrors { field, message } } }`;
+        const createInput = { title: productData.title, vendor: productData.vendor, productType: productData.productType, tags: productData.tags, status: "DRAFT" };
+        const createResult = await callShopifyApi(createMutation, { input: createInput });
+        productId = createResult.product.id;
+        variantId = createResult.product.variants.edges[0].node.id;
+        console.log(`   -> ✅ Esqueleto criado. ID do Produto: ${productId}`);
     }
+
+    // PASSO 2: Atualizar a variante e o produto principal com todos os detalhes
+    const updateMutation = `mutation productUpdate($input: ProductInput!) { productUpdate(input: $input) { product { id }, userErrors { field, message } } }`;
+    const updateInput = {
+        id: productId,
+        bodyHtml: productData.bodyHtml,
+        images: productData.images,
+        status: "ACTIVE",
+        variants: [{
+            id: variantId,
+            price: productData.price,
+            sku: productData.sku,
+            barcode: productData.ean,
+            inventoryItem: { tracked: true },
+            inventoryQuantities: [{
+                availableQuantity: productData.stock,
+                locationId: `gid://shopify/Location/${SHOPIFY_LOCATION_ID}`
+            }]
+        }]
+    };
+    
+    console.log(`   -> 🔄 A preencher/atualizar detalhes para o produto ${productId}...`);
+    await callShopifyApi(updateMutation, { input: updateInput });
+    console.log(`   -> ✅ Produto "${productData.title}" ${action} com sucesso.`);
 }
 
+
+// --- FUNÇÃO PRINCIPAL ---
 async function main() {
     try {
         console.log("🚀 Iniciando processo...");
-        const existingSkus = await getExistingShopifySkus();
+        if (!SHOPIFY_STORE_URL || !SHOPIFY_ACCESS_TOKEN || !SHOPIFY_LOCATION_ID) {
+            throw new Error("As variáveis de ambiente são obrigatórias.");
+        }
+
+        const existingProducts = await getExistingShopifyProducts();
         const productsToProcess = [];
 
         fs.createReadStream(CSV_INPUT_PATH)
             .on('error', (err) => { throw err; })
             .pipe(csv({ separator: ';', headers: CSV_HEADERS, skipLines: 1 }))
             .on('data', (row) => {
-                if (!row.name || row.name.trim() === '') return;
-                try {
-                    const transformedProduct = {
-                        sku: row[UNIQUE_PRODUCT_IDENTIFIER],
-                        title: row.name,
-                        vendor: row.brand,
-                        productType: row.category_parent,
-                        descriptionHtml: row.description || row.short_description_html || '',
-                        tags: [row.brand, row.category_parent, row.category].filter(Boolean).join(','),
-                        price: (row.PVP || row.msrp || '0').replace(',', '.'),
-                        stock: parseStock(row.stock),
-                        images: parseImages(row.image_path, row.extra_images_paths),
-                        ean: parseEan(row.ean)
-                    };
-                    productsToProcess.push(transformedProduct);
-                } catch (transformError) {
-                    console.warn(`⚠️ Erro ao transformar linha com SKU ${row.name}: ${transformError.message}`);
+                if (row.name && row.name.trim() !== '') {
+                    productsToProcess.push(transformRowToProduct(row));
                 }
             })
             .on('end', async () => {
@@ -202,15 +195,16 @@ async function main() {
                     console.log(`\n✅ Ficheiro lido. ${productsToProcess.length} produtos para sincronizar.`);
                     for (const product of productsToProcess) {
                         if (!product.sku) continue;
-                        await new Promise(resolve => setTimeout(resolve, 500));
+                        await new Promise(resolve => setTimeout(resolve, 1000)); // Delay para não sobrecarregar a API
+                        
                         try {
-                            if (existingSkus.has(product.sku)) {
-                                await manageProduct(existingSkus.get(product.sku), product, false);
+                            if (existingProducts.has(product.sku)) {
+                                await manageProduct(existingProducts.get(product.sku), product, false);
                             } else {
                                 await manageProduct(null, product, true);
                             }
                         } catch (productSyncError) {
-                            console.error(`🚨 Falha ao sincronizar SKU ${product.sku}: ${productSyncError.message}`);
+                            console.error(`🚨 Falha ao sincronizar SKU ${product.sku}: ${productSyncError.message}`.red);
                         }
                     }
                     console.log(`\n🎉 Sincronização concluída!`);
