@@ -14,14 +14,12 @@ const SHOPIFY_GRAPHQL_ENDPOINT = `https://${SHOPIFY_STORE_URL}/admin/api/${API_V
 const HEADERS = { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN };
 const UNIQUE_PRODUCT_IDENTIFIER = 'name';
 
-// --- DEFINIÇÃO DAS COLUNAS DO CSV ---
 const CSV_HEADERS = [
     'name', 'image_path', 'stock', 'msrp', 'brand', 'description', 'specifications', 
     'content', 'short_description', 'short_description_html', 'category', 'category_parent', 
     'precio_neto_compra', 'precio_venta_cliente_final', 'PVP', 'ean', 'published', 
     'created', 'modified', 'params', 'related_products', 'extra_images_paths', 'category_id'
 ];
-
 
 // --- FUNÇÕES DA API SHOPIFY ---
 
@@ -30,7 +28,7 @@ async function getExistingShopifySkus() {
     const skus = new Map();
     let hasNextPage = true;
     let cursor = null;
-    const query = `query getProducts($cursor: String) { products(first: 250, after: $cursor) { pageInfo { hasNextPage }, edges { cursor, node { id, variants(first: 10) { edges { node { sku } } } } } } }`;
+    const query = `query getProducts($cursor: String) { products(first: 250, after: $cursor) { pageInfo { hasNextPage }, edges { cursor, node { id, variants(first: 10) { edges { node { id, sku } } } } } } }`;
 
     while (hasNextPage) {
         const response = await axios.post(SHOPIFY_GRAPHQL_ENDPOINT, { query, variables: { cursor } }, { headers: HEADERS });
@@ -40,7 +38,7 @@ async function getExistingShopifySkus() {
         for (const productEdge of products.edges) {
             for (const variantEdge of productEdge.node.variants.edges) {
                 if (variantEdge.node.sku) {
-                    skus.set(variantEdge.node.sku, productEdge.node.id);
+                    skus.set(variantEdge.node.sku, { productId: productEdge.node.id, variantId: variantEdge.node.id });
                 }
             }
             cursor = productEdge.cursor;
@@ -53,42 +51,33 @@ async function getExistingShopifySkus() {
 
 async function createShopifyProduct(product) {
     console.log(`➕ A criar novo produto: ${product.title}`);
-    const mutation = `
+    
+    // PASSO 1: Criar produto base para obter IDs
+    const createMutation = `
         mutation productCreate($input: ProductInput!) {
             productCreate(input: $input) {
-                product { id, title }
+                product { id, variants(first: 1) { edges { node { id } } } }
                 userErrors { field, message }
             }
         }`;
+    const createInput = { input: { title: product.title, status: 'DRAFT' } }; // Criar como rascunho primeiro
+    const createResponse = await axios.post(SHOPIFY_GRAPHQL_ENDPOINT, { query: createMutation, variables: createInput }, { headers: HEADERS });
+
+    if (createResponse.data.errors) throw new Error(`Erro GraphQL ao criar: ${createResponse.data.errors[0].message}`);
+    if (createResponse.data.data.productCreate.userErrors.length > 0) throw new Error(`Erro API ao criar: ${createResponse.data.data.productCreate.userErrors[0].message}`);
     
-    const input = {
-        title: product.title,
-        vendor: product.vendor,
-        productType: product.productType,
-        descriptionHtml: product.descriptionHtml,
-        tags: product.tags,
-        status: 'ACTIVE',
-        images: product.images,
-        variants: [{
-            price: product.price,
-            sku: product.sku,
-            inventoryItem: { tracked: true },
-            inventoryQuantities: [{
-                availableQuantity: product.stock,
-                locationId: `gid://shopify/Location/${SHOPIFY_LOCATION_ID}`
-            }]
-        }]
-    };
-    
-    const response = await axios.post(SHOPIFY_GRAPHQL_ENDPOINT, { query: mutation, variables: { input } }, { headers: HEADERS });
-    if (response.data.errors) throw new Error(`Erro GraphQL ao criar: ${response.data.errors[0].message}`);
-    if (response.data.data.productCreate.userErrors.length > 0) throw new Error(`Erro API ao criar: ${response.data.data.productCreate.userErrors[0].message}`);
-    
-    console.log(`   -> ✅ Produto "${product.title}" criado com sucesso.`);
+    const { id: productId, variants } = createResponse.data.data.productCreate.product;
+    const variantId = variants.edges[0].node.id;
+    console.log(`   -> ✅ Produto base criado com ID: ${productId}`);
+
+    // PASSO 2: Atualizar com todos os detalhes
+    await updateShopifyProduct({ productId, variantId }, product, true);
 }
 
-async function updateShopifyProduct(productId, product) {
-    console.log(`🔄 A atualizar produto existente: ${product.title}`);
+async function updateShopifyProduct(ids, product, isNewProduct = false) {
+    const { productId, variantId } = ids;
+    console.log(`🔄 A ${isNewProduct ? 'finalizar' : 'atualizar'} produto: ${product.title}`);
+
     const mutation = `
         mutation productUpdate($input: ProductInput!) {
             productUpdate(input: $input) {
@@ -104,17 +93,28 @@ async function updateShopifyProduct(productId, product) {
         productType: product.productType,
         descriptionHtml: product.descriptionHtml,
         tags: product.tags,
+        images: product.images,
+        status: 'ACTIVE', // Ativar o produto agora
+        variants: [{
+            id: variantId, // Atualizar a variante existente
+            price: product.price,
+            sku: product.sku,
+            inventoryItem: { tracked: true },
+            inventoryQuantities: [{
+                availableQuantity: product.stock,
+                locationId: `gid://shopify/Location/${SHOPIFY_LOCATION_ID}`
+            }]
+        }]
     };
 
     const response = await axios.post(SHOPIFY_GRAPHQL_ENDPOINT, { query: mutation, variables: { input } }, { headers: HEADERS });
     if (response.data.errors) throw new Error(`Erro GraphQL ao atualizar: ${response.data.errors[0].message}`);
     if (response.data.data.productUpdate.userErrors.length > 0) throw new Error(`Erro API ao atualizar: ${response.data.data.productUpdate.userErrors[0].message}`);
 
-    console.log(`   -> ✅ Produto "${product.title}" atualizado com sucesso.`);
+    console.log(`   -> ✅ Produto "${product.title}" ${isNewProduct ? 'finalizado' : 'atualizado'} com sucesso.`);
 }
 
 // --- FUNÇÃO PRINCIPAL ---
-
 async function main() {
     try {
         console.log("🚀 Iniciando processo de sincronização de produtos do CSV.");
@@ -127,10 +127,7 @@ async function main() {
         const productsToProcess = [];
 
         fs.createReadStream(CSV_INPUT_PATH)
-            .on('error', (err) => {
-                console.error(`🚨 Erro ao ler o ficheiro CSV em ${CSV_INPUT_PATH}.`);
-                throw err;
-            })
+            .on('error', (err) => { throw err; })
             .pipe(csv({ separator: '\t', headers: CSV_HEADERS, skipLines: 1 }))
             .on('data', (row) => {
                 try {
@@ -142,7 +139,7 @@ async function main() {
                         try {
                             const extraImages = JSON.parse(row.extra_images_paths).details;
                             if (Array.isArray(extraImages)) {
-                                allImages.push(...extraImages.filter(img => !img.includes('_thumb.')));
+                                allImages.push(...extraImages.filter(img => img && !img.includes('_thumb.')));
                             }
                         } catch (e) { /* ignorar */ }
                     }
@@ -179,8 +176,8 @@ async function main() {
                         await new Promise(resolve => setTimeout(resolve, 500)); 
                         
                         if (existingSkus.has(product.sku)) {
-                            const productId = existingSkus.get(product.sku);
-                            await updateShopifyProduct(productId, product);
+                            const ids = existingSkus.get(product.sku);
+                            await updateShopifyProduct(ids, product);
                             updatedCount++;
                         } else {
                             await createShopifyProduct(product);
