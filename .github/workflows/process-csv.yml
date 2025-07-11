@@ -22,6 +22,7 @@ jobs:
         run: npm install
 
       - name: Executar script de processamento CSV
+        # CORREÇÃO: 'run' está agora ao mesmo nível de 'env'
         env:
           SHOPIFY_STORE_URL: ${{ secrets.SHOPIFY_STORE_URL }}
           SHOPIFY_ACCESS_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN }}
