@@ -15,7 +15,6 @@ const HEADERS = { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': 
 const UNIQUE_PRODUCT_IDENTIFIER = 'name';
 
 // --- DEFINIÇÃO DAS COLUNAS DO CSV ---
-// Este "mapa" garante que o script lê as colunas corretamente.
 const CSV_HEADERS = [
     'name', 'image_path', 'stock', 'msrp', 'brand', 'description', 'specifications', 
     'content', 'short_description', 'short_description_html', 'category', 'category_parent', 
@@ -132,7 +131,6 @@ async function main() {
                 console.error(`🚨 Erro ao ler o ficheiro CSV em ${CSV_INPUT_PATH}.`);
                 throw err;
             })
-            // CORREÇÃO: Usar o "mapa" de colunas e ignorar a primeira linha do ficheiro
             .pipe(csv({ separator: '\t', headers: CSV_HEADERS, skipLines: 1 }))
             .on('data', (row) => {
                 try {
@@ -178,4 +176,32 @@ async function main() {
                             continue;
                         }
                         
-                        await new Promise(resolve => setTimeout(resolve
+                        await new Promise(resolve => setTimeout(resolve, 500)); 
+                        
+                        if (existingSkus.has(product.sku)) {
+                            const productId = existingSkus.get(product.sku);
+                            await updateShopifyProduct(productId, product);
+                            updatedCount++;
+                        } else {
+                            await createShopifyProduct(product);
+                            createdCount++;
+                        }
+                    }
+
+                    console.log(`\n🎉 Sincronização concluída!`);
+                    console.log(`   - ${createdCount} produtos criados.`);
+                    console.log(`   - ${updatedCount} produtos atualizados.`);
+                } catch (syncError) {
+                    console.error(`🚨 Erro durante a sincronização com a Shopify: ${syncError.message}`);
+                    process.exit(1);
+                }
+            });
+
+    } catch (error) {
+        console.error(`🚨 Erro fatal no processo: ${error.message}`);
+        console.error(error.stack);
+        process.exit(1);
+    }
+}
+
+main();
