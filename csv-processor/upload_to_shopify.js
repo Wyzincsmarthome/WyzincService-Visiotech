@@ -1,83 +1,63 @@
-// upload_to_shopify.js
-const { Shopify } = require('@shopify/shopify-api');
+require('dotenv').config();
+const axios = require('axios');
 
-const SHOPIFY_STORE = process.env.SHOPIFY_STORE; // ex: "minhaloja.myshopify.com"
+const SHOPIFY_STORE_URL = process.env.SHOPIFY_STORE_URL;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
+const SHOPIFY_LOCATION_ID = process.env.SHOPIFY_LOCATION_ID;
+const API_VERSION = '2024-10';
+const SHOPIFY_GRAPHQL_ENDPOINT = `https://${SHOPIFY_STORE_URL}/admin/api/${API_VERSION}/graphql.json`;
+const HEADERS = { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN };
 
-if (!SHOPIFY_STORE || !SHOPIFY_ACCESS_TOKEN) {
-    console.error('🚨 Variáveis de ambiente SHOPIFY_STORE ou SHOPIFY_ACCESS_TOKEN não definidas!');
-    process.exit(1);
+async function callShopifyApi(query, variables) {
+    const response = await axios.post(SHOPIFY_GRAPHQL_ENDPOINT, { query, variables }, { headers: HEADERS });
+    if (response.data.errors) throw new Error(response.data.errors.map(e => e.message).join(', '));
+    const responseData = response.data.data;
+    const mutationResultKey = Object.keys(responseData)[0];
+    const mutationResult = responseData[mutationResultKey];
+    if (mutationResult.userErrors?.length > 0) throw new Error(mutationResult.userErrors.map(e => `${e.field}: ${e.message}`).join(', '));
+    return mutationResult;
 }
 
-const client = new Shopify.Clients.Rest(SHOPIFY_STORE, SHOPIFY_ACCESS_TOKEN);
+async function getExistingShopifyProducts() { /* ... código da função como na resposta anterior ... */ }
 
-async function getProductByHandle(handle) {
-    try {
-        const response = await client.get({
-            path: 'products',
-            query: { handle: handle }
-        });
-        const products = response.body.products || [];
-        return products.length > 0 ? products[0] : null;
-    } catch (error) {
-        console.error(`Erro ao obter produto pelo handle ${handle}:`, error.message);
-        return null;
+async function manageProduct(ids, productData, isNewProduct) {
+    const action = isNewProduct ? 'criar' : 'atualizar';
+    let { productId, variantId } = ids || {};
+    console.log(`\n📦 A ${action} produto: ${productData.title}`);
+    if (isNewProduct) {
+        const createResult = await callShopifyApi(`mutation productCreate($input: ProductInput!) { productCreate(input: $input) { product { id, variants(first: 1) { edges { node { id } } } } } }`, { input: { title: productData.title } });
+        productId = createResult.product.id;
+        variantId = createResult.product.variants.edges[0].node.id;
+        console.log(`   -> ✅ Esqueleto criado. ID do Produto: ${productId}`);
     }
-}
-
-async function createOrUpdateProduct(productData) {
-    try {
-        const handle = productData['Handle'];
-        if (!handle) {
-            console.error('Produto sem Handle definido.');
-            return { updated: 0, created: 0 };
-        }
-
-        const existingProduct = await getProductByHandle(handle);
-
-        if (existingProduct) {
-            // Atualizar produto - aqui podes adaptar os campos que queres atualizar
-            const productId = existingProduct.id;
-            await client.put({
-                path: `products/${productId}`,
-                data: { product: productData },
-                type: 'application/json'
-            });
-            console.log(`Produto atualizado: ${handle}`);
-            return { updated: 1, created: 0 };
-        } else {
-            // Criar novo produto
-            await client.post({
-                path: 'products',
-                data: { product: productData },
-                type: 'application/json'
-            });
-            console.log(`Produto criado: ${handle}`);
-            return { updated: 0, created: 1 };
-        }
-    } catch (error) {
-        console.error(`Erro ao criar/atualizar produto ${productData['Handle']}:`, error.message);
-        return { updated: 0, created: 0 };
+    const updateInput = { id: productId, bodyHtml: productData.bodyHtml, vendor: productData.vendor, productType: productData.productType, tags: productData.tags, status: 'ACTIVE' };
+    await callShopifyApi(`mutation productUpdate($input: ProductInput!) { productUpdate(input: $input) { product { id } } }`, { input: updateInput });
+    console.log(`   -> ✅ Detalhes do produto atualizados.`);
+    const variantInput = { id: variantId, price: productData.price, sku: productData.sku, inventoryQuantities: [{ availableQuantity: productData.stock, locationId: `gid://shopify/Location/${SHOPIFY_LOCATION_ID}` }]};
+    await callShopifyApi(`mutation productVariantUpdate($input: ProductVariantInput!) { productVariantUpdate(input: $input) { productVariant { id } } }`, {input: variantInput});
+    console.log(`   -> ✅ Variante atualizada.`);
+    if (isNewProduct && productData.images.length > 0) {
+        await callShopifyApi(`mutation productCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) { productCreateMedia(productId: $productId, media: $media) { media { id } } }`, { productId: productId, media: productData.images });
+        console.log(`   -> ✅ Imagens adicionadas.`);
     }
+    console.log(`   -> 🎉 Produto "${productData.title}" ${action} com sucesso.`);
 }
 
 async function uploadProductsToShopify(products) {
-    let createdCount = 0;
-    let updatedCount = 0;
-
+    console.log('🚀 Iniciando upload para Shopify...');
+    const existingProducts = await getExistingShopifyProducts();
     for (const product of products) {
-        const result = await createOrUpdateProduct(product);
-        createdCount += result.created;
-        updatedCount += result.updated;
+        if (!product.sku) continue;
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        try {
+            if (existingProducts.has(product.sku)) {
+                await manageProduct(existingProducts.get(product.sku), product, false);
+            } else {
+                await manageProduct(null, product, true);
+            }
+        } catch (productSyncError) {
+            console.error(`🚨 Falha ao sincronizar SKU ${product.sku}: ${productSyncError.message}`.red);
+        }
     }
-
-    console.log(`\nResumo do upload:`);
-    console.log(`• Produtos criados: ${createdCount}`);
-    console.log(`• Produtos atualizados: ${updatedCount}`);
-
-    return { created: createdCount, updated: updatedCount };
 }
-
-module.exports = {
-    uploadProductsToShopify
-};
+module.exports = { uploadProductsToShopify };
