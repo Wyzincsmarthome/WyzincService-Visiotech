@@ -5,7 +5,7 @@ const csv = require('csv-parser');
 const axios = require('axios');
 
 // --- CONFIGURAÇÃO ---
-const CSV_INPUT_PATH = path.join(__dirname, '../csv-input/products.csv');
+const CSV_INPUT_PATH = path.join(__dirname, '../csv-input/visiotech_connect.csv');
 const SHOPIFY_STORE_URL = process.env.SHOPIFY_STORE_URL;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 const SHOPIFY_LOCATION_ID = process.env.SHOPIFY_LOCATION_ID;
