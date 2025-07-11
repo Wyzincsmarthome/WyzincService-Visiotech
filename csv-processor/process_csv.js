@@ -5,7 +5,7 @@ const csv = require('csv-parser');
 const axios = require('axios');
 
 // --- CONFIGURAÇÃO ---
-const CSV_INPUT_PATH = path.join(__dirname, '../csv-input/visiotech_connect.csv');
+const CSV_INPUT_PATH = path.join(__dirname, '../csv-input/products.csv');
 const SHOPIFY_STORE_URL = process.env.SHOPIFY_STORE_URL;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 const SHOPIFY_LOCATION_ID = process.env.SHOPIFY_LOCATION_ID;
@@ -21,33 +21,17 @@ async function getExistingShopifySkus() {
     const skus = new Map();
     let hasNextPage = true;
     let cursor = null;
-
-    const query = `
-        query getProducts($cursor: String) {
-            products(first: 100, after: $cursor) {
-                pageInfo { hasNextPage }
-                edges {
-                    cursor
-                    node {
-                        id
-                        variants(first: 10) {
-                            edges { node { sku } }
-                        }
-                    }
-                }
-            }
-        }`;
+    const query = `query getProducts($cursor: String) { products(first: 250, after: $cursor) { pageInfo { hasNextPage }, edges { cursor, node { id, variants(first: 10) { edges { node { sku } } } } } } }`;
 
     while (hasNextPage) {
-        // CORREÇÃO: A chamada axios agora usa a variável 'HEADERS' (maiúsculas) corretamente.
         const response = await axios.post(SHOPIFY_GRAPHQL_ENDPOINT, { query, variables: { cursor } }, { headers: HEADERS });
+        if (response.data.errors) throw new Error(`Erro GraphQL ao obter SKUs: ${response.data.errors[0].message}`);
         const { products } = response.data.data;
         
         for (const productEdge of products.edges) {
-            const productId = productEdge.node.id;
             for (const variantEdge of productEdge.node.variants.edges) {
                 if (variantEdge.node.sku) {
-                    skus.set(variantEdge.node.sku, productId);
+                    skus.set(variantEdge.node.sku, productEdge.node.id);
                 }
             }
             cursor = productEdge.cursor;
@@ -96,6 +80,8 @@ async function createShopifyProduct(product) {
 
 async function updateShopifyProduct(productId, product) {
     console.log(`🔄 A atualizar produto existente: ${product.title}`);
+    // Esta função pode ser expandida no futuro para atualizar mais campos, como preço e stock.
+    // Por agora, vamos manter a atualização simples para garantir que o fluxo funciona.
     const mutation = `
         mutation productUpdate($input: ProductInput!) {
             productUpdate(input: $input) {
@@ -134,9 +120,13 @@ async function main() {
         const productsToProcess = [];
 
         fs.createReadStream(CSV_INPUT_PATH)
-            .pipe(csv({ separator: '\t' }))
+            // CORREÇÃO: Adicionar a opção 'bom: true' para lidar com a codificação do ficheiro.
+            .pipe(csv({ separator: '\t', bom: true }))
             .on('data', (row) => {
                 try {
+                    // Validação para garantir que a linha não está vazia
+                    if (!row.name) return;
+
                     const eanString = String(row.ean).includes('E+') ? BigInt(row.ean).toString() : String(row.ean);
                     const allImages = [row.image_path];
                     if (row.extra_images_paths) {
@@ -173,7 +163,7 @@ async function main() {
 
                     for (const product of productsToProcess) {
                         if (!product.sku) {
-                            console.warn(`   -> ⚠️ Pulando produto sem SKU: ${product.title}`);
+                            console.warn(`   -> ⚠️ Pulando produto sem SKU válido: ${product.title}`);
                             continue;
                         }
                         
