@@ -17,12 +17,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 18
-          # REMOVIDO: A linha 'cache: 'npm'' foi removida para evitar o erro do lock file.
           
       - name: Instalar dependências do projeto
         run: npm install
 
       - name: Executar script de processamento CSV
+        # ESTE BLOCO É ESSENCIAL PARA CARREGAR AS CREDENCIAIS
         env:
           SHOPIFY_STORE_URL: ${{ secrets.SHOPIFY_STORE_URL }}
           SHOPIFY_ACCESS_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN }}
