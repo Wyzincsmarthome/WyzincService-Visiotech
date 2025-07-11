@@ -14,6 +14,7 @@ const SHOPIFY_GRAPHQL_ENDPOINT = `https://${SHOPIFY_STORE_URL}/admin/api/${API_V
 const HEADERS = { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN };
 const UNIQUE_PRODUCT_IDENTIFIER = 'name';
 
+// --- DEFINIÇÃO DAS COLUNAS DO CSV ---
 const CSV_HEADERS = [
     'name', 'image_path', 'stock', 'msrp', 'brand', 'description', 'specifications', 
     'content', 'short_description', 'short_description_html', 'category', 'category_parent', 
@@ -28,7 +29,7 @@ async function getExistingShopifySkus() {
     const skus = new Map();
     let hasNextPage = true;
     let cursor = null;
-    const query = `query getProducts($cursor: String) { products(first: 250, after: $cursor) { pageInfo { hasNextPage }, edges { cursor, node { id, variants(first: 10) { edges { node { id, sku } } } } } } }`;
+    const query = `query getProducts($cursor: String) { products(first: 250, after: $cursor) { pageInfo { hasNextPage }, edges { cursor, node { id, variants(first: 1) { edges { node { id, sku } } } } } } }`;
 
     while (hasNextPage) {
         const response = await axios.post(SHOPIFY_GRAPHQL_ENDPOINT, { query, variables: { cursor } }, { headers: HEADERS });
@@ -36,13 +37,13 @@ async function getExistingShopifySkus() {
         const { products } = response.data.data;
         
         for (const productEdge of products.edges) {
-            for (const variantEdge of productEdge.node.variants.edges) {
-                if (variantEdge.node.sku) {
-                    skus.set(variantEdge.node.sku, { productId: productEdge.node.id, variantId: variantEdge.node.id });
-                }
+            // Apenas um SKU por produto neste fornecedor
+            const firstVariant = productEdge.node.variants.edges[0]?.node;
+            if (firstVariant?.sku) {
+                skus.set(firstVariant.sku, { productId: productEdge.node.id, variantId: firstVariant.id });
             }
-            cursor = productEdge.cursor;
         }
+        cursor = productEdge.cursor;
         hasNextPage = products.pageInfo.hasNextPage;
     }
     console.log(`✅ Encontrados ${skus.size} SKUs existentes.`);
@@ -51,26 +52,24 @@ async function getExistingShopifySkus() {
 
 async function createShopifyProduct(product) {
     console.log(`➕ A criar novo produto: ${product.title}`);
-    
-    // PASSO 1: Criar produto base para obter IDs
     const createMutation = `
         mutation productCreate($input: ProductInput!) {
             productCreate(input: $input) {
-                product { id, variants(first: 1) { edges { node { id } } } }
+                product { id, title, variants(first: 1) { edges { node { id } } } }
                 userErrors { field, message }
             }
         }`;
-    const createInput = { input: { title: product.title, status: 'DRAFT' } }; // Criar como rascunho primeiro
+    const createInput = { input: { title: product.title, status: 'DRAFT' } };
     const createResponse = await axios.post(SHOPIFY_GRAPHQL_ENDPOINT, { query: createMutation, variables: createInput }, { headers: HEADERS });
 
-    if (createResponse.data.errors) throw new Error(`Erro GraphQL ao criar: ${createResponse.data.errors[0].message}`);
-    if (createResponse.data.data.productCreate.userErrors.length > 0) throw new Error(`Erro API ao criar: ${createResponse.data.data.productCreate.userErrors[0].message}`);
+    if (createResponse.data.errors) throw new Error(`Erro GraphQL ao criar (Passo 1): ${createResponse.data.errors[0].message}`);
+    if (createResponse.data.data.productCreate.userErrors.length > 0) throw new Error(`Erro API ao criar (Passo 1): ${createResponse.data.data.productCreate.userErrors[0].message}`);
     
     const { id: productId, variants } = createResponse.data.data.productCreate.product;
-    const variantId = variants.edges[0].node.id;
+    const variantId = variants.edges[0]?.node?.id;
+    if (!productId || !variantId) throw new Error('Falha ao obter IDs do produto/variante criados.');
+    
     console.log(`   -> ✅ Produto base criado com ID: ${productId}`);
-
-    // PASSO 2: Atualizar com todos os detalhes
     await updateShopifyProduct({ productId, variantId }, product, true);
 }
 
@@ -94,9 +93,9 @@ async function updateShopifyProduct(ids, product, isNewProduct = false) {
         descriptionHtml: product.descriptionHtml,
         tags: product.tags,
         images: product.images,
-        status: 'ACTIVE', // Ativar o produto agora
+        status: 'ACTIVE',
         variants: [{
-            id: variantId, // Atualizar a variante existente
+            id: variantId,
             price: product.price,
             sku: product.sku,
             inventoryItem: { tracked: true },
@@ -120,7 +119,7 @@ async function main() {
         console.log("🚀 Iniciando processo de sincronização de produtos do CSV.");
 
         if (!SHOPIFY_STORE_URL || !SHOPIFY_ACCESS_TOKEN || !SHOPIFY_LOCATION_ID) {
-            throw new Error("As variáveis de ambiente SHOPIFY_STORE_URL, SHOPIFY_ACCESS_TOKEN e SHOPIFY_LOCATION_ID são obrigatórias.");
+            throw new Error("As variáveis de ambiente são obrigatórias.");
         }
 
         const existingSkus = await getExistingShopifySkus();
@@ -128,10 +127,11 @@ async function main() {
 
         fs.createReadStream(CSV_INPUT_PATH)
             .on('error', (err) => { throw err; })
-            .pipe(csv({ separator: '\t', headers: CSV_HEADERS, skipLines: 1 }))
+            // CORREÇÃO FINAL: Mudar o separador de tabulação para ponto e vírgula.
+            .pipe(csv({ separator: ';', headers: CSV_HEADERS, skipLines: 1 }))
             .on('data', (row) => {
                 try {
-                    if (!row.name) return;
+                    if (!row.name || row.name.trim() === '') return;
 
                     const eanString = String(row.ean || '').includes('E+') ? BigInt(row.ean).toString() : String(row.ean || '');
                     const allImages = [row.image_path];
@@ -169,7 +169,7 @@ async function main() {
 
                     for (const product of productsToProcess) {
                         if (!product.sku) {
-                            console.warn(`   -> ⚠️ Pulando produto sem SKU válido: ${product.title}`);
+                            console.warn(`   -> ⚠️ Pulando produto sem SKU válido.`);
                             continue;
                         }
                         
