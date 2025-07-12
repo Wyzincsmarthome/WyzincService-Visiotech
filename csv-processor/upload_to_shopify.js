@@ -1,5 +1,5 @@
-require('dotenv').config();
 const axios = require('axios');
+require('dotenv').config();
 
 const SHOPIFY_STORE_URL = process.env.SHOPIFY_STORE_URL;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
@@ -28,16 +28,13 @@ async function getExistingShopifyProducts() {
     const products = new Map();
     let hasNextPage = true;
     let cursor = null;
-    const query = `query getProducts($cursor: String) { products(first: 250, after: $cursor) { pageInfo { hasNextPage }, edges { cursor, node { id, handle, variants(first: 1) { edges { node { id, sku } } } } } } }`;
+    const query = `query getProducts($cursor: String) { products(first: 250, after: $cursor) { pageInfo { hasNextPage }, edges { cursor, node { id, handle } } } }`;
+
     while (hasNextPage) {
         const responseData = await callShopifyApi(query, { cursor });
         const responseProducts = responseData.products;
         for (const productEdge of responseProducts.edges) {
-            const product = productEdge.node;
-            const firstVariant = product.variants.edges[0]?.node;
-            if (firstVariant?.sku) {
-                products.set(firstVariant.sku, { productId: product.id, variantId: firstVariant.id });
-            }
+            products.set(productEdge.node.handle, productEdge.node.id);
             cursor = productEdge.cursor;
         }
         hasNextPage = responseProducts.pageInfo.hasNextPage;
@@ -46,44 +43,57 @@ async function getExistingShopifyProducts() {
     return products;
 }
 
-async function manageProduct(ids, productData, isNewProduct) {
-    const action = isNewProduct ? 'criar' : 'atualizar';
-    let { productId, variantId } = ids || {};
-    console.log(`\n📦 A ${action} produto: ${productData.title}`);
-    
-    if (isNewProduct) {
-        const createResult = await callShopifyApi(`mutation productCreate($input: ProductInput!) { productCreate(input: $input) { product { id, variants(first: 1) { edges { node { id } } } } } }`, { input: { title: productData.title, handle: productData.handle, vendor: productData.vendor } });
-        productId = createResult.product.id;
-        variantId = createResult.product.variants.edges[0].node.id;
-        console.log(`   -> ✅ Esqueleto criado com ID: ${productId}`);
-    }
-
-    const updateInput = { id: productId, bodyHtml: productData.bodyHtml, productType: productData.productType, tags: productData.tags, status: "ACTIVE", images: productData.images };
-    await callShopifyApi(`mutation productUpdate($input: ProductInput!) { productUpdate(input: $input) { product { id } } }`, { input: updateInput });
-    console.log(`   -> ✅ Detalhes do produto (descrição, tags...) atualizados.`);
-
-    const variantInput = { id: variantId, price: productData.price, sku: productData.sku, barcode: productData.ean, inventoryQuantities: [{ availableQuantity: productData.stock, locationId: `gid://shopify/Location/${SHOPIFY_LOCATION_ID}` }] };
-    await callShopifyApi(`mutation productVariantUpdate($input: ProductVariantInput!) { productVariantUpdate(input: $input) { productVariant { id } } }`, { input: variantInput });
-    console.log(`   -> ✅ Variante (preço, stock, SKU) atualizada.`);
-    
-    console.log(`   -> 🎉 Produto "${productData.title}" ${action} com sucesso.`);
-}
-
-async function uploadProductsToShopify(products) {
+async function uploadProductsToShopify(productsInShopifyFormat) {
     console.log('🚀 Iniciando upload para Shopify...');
     const existingProducts = await getExistingShopifyProducts();
-    for (const product of products) {
-        if (!product.sku) continue;
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        try {
-            if (existingProducts.has(product.sku)) {
-                await manageProduct(existingProducts.get(product.sku), product, false);
-            } else {
-                await manageProduct(null, product, true);
-            }
-        } catch (productSyncError) {
-            console.error(`🚨 Falha ao sincronizar SKU ${product.sku}: ${productSyncError.message}`);
+    const productsByHandle = new Map();
+
+    for (const row of productsInShopifyFormat) {
+        if (!productsByHandle.has(row.Handle)) {
+            productsByHandle.set(row.Handle, []);
         }
+        productsByHandle.get(row.Handle).push(row);
+    }
+
+    for (const [handle, rows] of productsByHandle.entries()) {
+        const mainRow = rows[0];
+        const images = rows.map(r => ({ src: r['Image Src'] })).filter(img => img.src);
+        
+        const input = {
+            handle: mainRow.Handle,
+            title: mainRow.Title,
+            bodyHtml: mainRow['Body (HTML)'],
+            vendor: mainRow.Vendor,
+            productType: mainRow.Type,
+            tags: mainRow.Tags,
+            status: "ACTIVE",
+            images,
+            variants: [{
+                price: mainRow['Variant Price'],
+                sku: mainRow['Variant SKU'],
+                inventoryPolicy: "DENY",
+                inventoryManagement: "SHOPIFY",
+                inventoryQuantities: [{ availableQuantity: parseInt(mainRow['Variant Inventory Qty'], 10) || 0, locationId: `gid://shopify/Location/${SHOPIFY_LOCATION_ID}` }],
+                barcode: mainRow['Variant Barcode']
+            }]
+        };
+
+        try {
+            if (existingProducts.has(handle)) {
+                console.log(`🔄 Atualizando produto: ${mainRow.Title}`);
+                input.id = existingProducts.get(handle);
+                await callShopifyApi(`mutation productUpdate($input: ProductInput!) { productUpdate(input: $input) { product { id } } }`, { input });
+                console.log(`   -> ✅ Produto atualizado com sucesso.`);
+            } else {
+                console.log(`➕ A criar novo produto: ${mainRow.Title}`);
+                await callShopifyApi(`mutation productCreate($input: ProductInput!) { productCreate(input: $input) { product { id } } }`, { input });
+                console.log(`   -> ✅ Produto criado com sucesso.`);
+            }
+        } catch (e) {
+            console.error(`🚨 Falha ao sincronizar produto com handle ${handle}: ${e.message}`);
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
     }
 }
+
 module.exports = { uploadProductsToShopify };
