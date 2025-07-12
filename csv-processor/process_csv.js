@@ -1,21 +1,25 @@
 const path = require('path');
-const { getTransformedProducts } = require('./csv_transformer');
+// Corrigido para usar a nova função exportada
+const { transformVisiCSVToShopify } = require('./csv_transformer'); 
 const { uploadProductsToShopify } = require('./upload_to_shopify');
 
-const CSV_INPUT_PATH = path.join(__dirname, '../csv-input/visiotech_connect.csv');
+const INPUT_CSV_PATH = path.join(__dirname, '../csv-input/visiotech_connect.csv');
 
 async function main() {
     try {
-        console.log("🚀 Iniciando processo...");
+        console.log("🚀 Iniciando processo completo...");
         
-        const transformedProducts = await getTransformedProducts(CSV_INPUT_PATH);
+        // A sua função original `transformVisiCSVToShopify` é chamada.
+        // Ela agora devolve os dados em vez de escrever um ficheiro.
+        const { shopifyLines } = await transformVisiCSVToShopify(INPUT_CSV_PATH);
         
-        if (!transformedProducts || transformedProducts.length === 0) {
+        if (!shopifyLines || shopifyLines.length === 0) {
             console.log('✅ Nenhum produto para processar. Fim.');
             return;
         }
 
-        await uploadProductsToShopify(transformedProducts);
+        // A lógica de upload agora recebe os dados diretamente.
+        await uploadProductsToShopify(shopifyLines);
 
         console.log('\n🎉 Sincronização concluída!');
 
