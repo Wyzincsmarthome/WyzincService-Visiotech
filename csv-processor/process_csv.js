@@ -8,7 +8,6 @@ async function main() {
     try {
         console.log("🚀 Iniciando processo...");
         
-        // Passo 1: Ler e transformar o CSV do fornecedor usando a sua lógica
         const transformedProducts = await getTransformedProducts(CSV_INPUT_PATH);
         
         if (!transformedProducts || transformedProducts.length === 0) {
@@ -16,7 +15,6 @@ async function main() {
             return;
         }
 
-        // Passo 2: Enviar os produtos transformados para a Shopify
         await uploadProductsToShopify(transformedProducts);
 
         console.log('\n🎉 Sincronização concluída!');
